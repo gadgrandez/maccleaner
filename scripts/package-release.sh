@@ -12,4 +12,5 @@ mkdir -p "$ROOT/dist"
 rm -f "$ZIP"
 # ditto keeps the code signature and extended attributes intact (zip -r would not).
 ditto -c -k --keepParent "$ROOT/build/MacCleaner.app" "$ZIP"
-shasum -a 256 "$ZIP" | tee "$ZIP.sha256"
+# Checksum with just the file name, so it can be verified from any folder.
+(cd "$ROOT/dist" && shasum -a 256 "$(basename "$ZIP")") | tee "$ZIP.sha256"
