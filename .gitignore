@@ -1,0 +1,7 @@
+target/
+build/
+gui/.build/
+.DS_Store
+dist/
+# Local reverse-engineering notes about a third-party product: not published.
+ANALISIS.md

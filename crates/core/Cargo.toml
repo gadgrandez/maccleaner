@@ -1,0 +1,12 @@
+[package]
+name = "maccleaner-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+libc.workspace = true
+plist.workspace = true
+objc2.workspace = true
+objc2-foundation.workspace = true
+twox-hash = { version = "2", default-features = false, features = ["std", "xxhash3_128"] }

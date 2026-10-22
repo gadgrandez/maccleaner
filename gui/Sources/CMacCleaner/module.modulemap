@@ -1,0 +1,5 @@
+module CMacCleaner [system] {
+    header "../../../crates/ffi/include/maccleaner.h"
+    link "maccleaner_ffi"
+    export *
+}

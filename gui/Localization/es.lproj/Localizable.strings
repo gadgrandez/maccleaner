@@ -1,0 +1,336 @@
+/* Spanish UI. Key: the English source text used with loc() in gui/Sources/MacCleaner. */
+
+/* Navigation */
+"Cleanup" = "Limpieza";
+"Performance" = "Rendimiento";
+"Applications" = "Aplicaciones";
+"Files" = "Archivos";
+"Smart Care" = "Smart Care";
+"System Junk" = "Basura del sistema";
+"Developer Junk" = "Residuos de desarrollo";
+"Privacy" = "Privacidad";
+"Mac Status" = "Estado del Mac";
+"Maintenance" = "Mantenimiento";
+"Login & Background" = "Inicio y segundo plano";
+"Processes" = "Procesos";
+"Uninstaller" = "Desinstalador";
+"Updates" = "Actualizaciones";
+"App Leftovers" = "Restos de apps";
+"Extensions" = "Extensiones";
+"Space Lens" = "Space Lens";
+"Large & Old Files" = "Grandes y antiguos";
+"Duplicates" = "Duplicados";
+
+/* Window, sidebar and alerts */
+"Couldn't complete" = "No se pudo completar";
+"OK" = "Aceptar";
+"Startup disk" = "Disco de arranque";
+"%@ free of %@" = "%1$@ libres de %2$@";
+"Limited access" = "Acceso limitado";
+"Grant Full Disk Access to scan Desktop, Documents, Downloads, the Trash and Mail without interruptions." = "Concede Acceso total al disco para analizar Escritorio, Documentos, Descargas, la Papelera y Mail sin interrupciones.";
+"Open Settings" = "Abrir Ajustes";
+"Empty response from the core" = "Respuesta vacía del núcleo";
+"Unknown error" = "Error desconocido";
+
+/* Shared components */
+"Scan" = "Escanear";
+"Scanning…" = "Analizando…";
+"Waiting: another scan is finishing…" = "En espera: termina otro análisis…";
+"Show in Finder" = "Mostrar en Finder";
+"Size" = "Tamaño";
+"Name" = "Nombre";
+"Search" = "Buscar";
+"Sort" = "Ordenar";
+"Ascending order" = "Orden ascendente";
+"Descending order" = "Orden descendente";
+"Scan again" = "Volver a analizar";
+"%@ selected" = "%@ seleccionados";
+"Selected" = "Seleccionado";
+"Last clean: %@" = "Última limpieza: %@";
+"%@ failures" = "%@ fallos";
+"Clean" = "Limpiar";
+"Cleaning…" = "Limpiando…";
+"Clean %@?" = "¿Limpiar %@?";
+"Move to Trash" = "Mover a la Papelera";
+"Refresh" = "Actualizar";
+"Remove" = "Eliminar";
+"Run" = "Ejecutar";
+
+/* Item kinds */
+"Cache" = "Caché";
+"Preferences" = "Preferencias";
+"App data" = "Datos de la app";
+"Container" = "Contenedor";
+"Shared container" = "Contenedor compartido";
+"Saved state" = "Estado guardado";
+"Logs" = "Logs";
+"Launch agent" = "Agente de inicio";
+"Cookies" = "Cookies";
+"Web data" = "Datos web";
+"Other" = "Otros";
+"Preference panes" = "Paneles de preferencias";
+"Quick Look plugins" = "Plugins de Vista rápida";
+"Spotlight importers" = "Importadores de Spotlight";
+"Internet plugins" = "Plugins de Internet";
+"Screen savers" = "Salvapantallas";
+"Services" = "Servicios";
+"Mail plugins" = "Plugins de Mail";
+"User agents" = "Agentes de usuario";
+"Global agents" = "Agentes globales";
+"System daemons" = "Daemons del sistema";
+"Videos" = "Vídeos";
+"Images" = "Imágenes";
+"Audio" = "Audio";
+"Archives" = "Archivos comprimidos";
+"Disk images" = "Imágenes de disco";
+"Documents" = "Documentos";
+"Apps" = "Apps";
+"Code" = "Código";
+
+/* Smart Care */
+"System memory is under critical pressure. Close apps or tabs you aren't using and scan again." = "La memoria del sistema está bajo presión crítica. Cierra apps o pestañas que no uses y vuelve a analizar.";
+"A one-click scan of your whole Mac: cleanup, privacy, performance, apps and files." = "Un análisis de todo tu Mac en un clic: limpieza, privacidad, rendimiento, apps y archivos.";
+"Tune up your Mac" = "Pon a punto tu Mac";
+"Scans junk, developer junk, browsing traces, app leftovers, background launch items and large files." = "Analiza basura, residuos de desarrollo, rastros de navegación, restos de apps, arranque en segundo plano y archivos grandes.";
+"Scanning your Mac…" = "Analizando tu Mac…";
+"of safe junk ready to clean" = "de basura segura lista para limpiar";
+"Review" = "Revisar";
+"in inactive project dependencies and tool caches" = "en dependencias de proyectos inactivos y cachés de herramientas";
+"in browsing data" = "en datos de navegación";
+"of leftovers from deleted apps" = "de restos de apps eliminadas";
+"user agents active in the background" = "agentes de usuario activos en segundo plano";
+"Manage" = "Gestionar";
+"files over 100 MB · %@" = "archivos de más de 100 MB · %@";
+"%@ free" = "%@ libres";
+"memory %@ of %@" = "memoria %1$@ de %2$@";
+"View status" = "Ver estado";
+"Done: %@ moved to the Trash" = "Listo: %@ enviados a la Papelera";
+"Empty the Trash to reclaim the space. The rest of the recommendations are below." = "Vacía la Papelera para recuperar el espacio. El resto de recomendaciones está abajo.";
+"You can safely reclaim %@" = "Puedes recuperar %@ sin riesgo";
+"Only the junk checked by default is cleaned. Everything else needs your review." = "Sólo se limpia la basura marcada por defecto. Lo demás requiere tu revisión.";
+
+/* System Junk */
+"Search items" = "Buscar elemento";
+"Caches, logs and development leftovers that are safe to delete." = "Cachés, logs y restos de desarrollo que se pueden borrar sin riesgo.";
+"Find junk on your Mac" = "Busca basura en tu Mac";
+"Checks caches, logs, Xcode and simulator data, Mail downloads and more. Everything goes to the Trash." = "Revisa cachés, logs, datos de Xcode y simuladores, descargas de Mail y más. Todo va a la Papelera.";
+"All clean" = "Todo limpio";
+"No junk was found." = "No se ha encontrado basura.";
+"Clean (includes permanent deletion)" = "Limpiar (incluye borrado definitivo)";
+"Items in the Trash are deleted forever; everything else is moved to the Trash." = "Los elementos de la Papelera se borran para siempre; el resto se mueve a la Papelera.";
+"You can recover the items from the Trash until you empty it." = "Podrás recuperar los elementos desde la Papelera hasta que la vacíes.";
+"Found" = "Encontrado";
+"Scan time" = "Tiempo de análisis";
+"permanent" = "definitivo";
+"review" = "revisar";
+"%@ not accessible: grant Full Disk Access to include them" = "%@ sin acceso: concede Acceso total al disco para incluirlos";
+"%@ items" = "%@ elementos";
+"Hide items in %@" = "Ocultar elementos de %@";
+"Show items in %@" = "Mostrar elementos de %@";
+"%@ files" = "%@ archivos";
+
+/* Developer Junk */
+"Inactivity" = "Inactividad";
+"Location" = "Ubicación";
+"Search projects" = "Buscar proyecto";
+"failed" = "falló";
+"Project dependencies and builds, toolchain caches and old versions." = "Dependencias y compilaciones de proyectos, cachés de toolchains y versiones antiguas.";
+"Inactive only" = "Solo inactivos";
+"Find developer junk" = "Busca residuos de desarrollo";
+"node_modules, target, Pods, .venv, .gradle, .next… only next to the file that generates them. Plus npm, Bun, Cargo, Gradle and uv caches and old Node or Rust versions. With Full Disk Access it also checks Desktop, Documents and Downloads." = "node_modules, target, Pods, .venv, .gradle, .next… sólo junto al fichero que los genera. Más cachés de npm, Bun, Cargo, Gradle, uv y versiones antiguas de Node o Rust. Con Acceso total al disco también revisa Escritorio, Documentos y Descargas.";
+"Projects" = "Proyectos";
+"%@ · by %@" = "%1$@ · por %2$@";
+"Tools" = "Herramientas";
+"Caches and old versions" = "Cachés y versiones antiguas";
+"Folders will go to the Trash and %@ command cleanups (Homebrew/Docker) will run, which can't be undone. Dependencies are regenerated with npm install, cargo build, pod install…" = "Las carpetas irán a la Papelera y se ejecutarán %@ limpiezas por comando (Homebrew/Docker), que no se pueden deshacer. Las dependencias se regeneran con npm install, cargo build, pod install…";
+"Folders will go to the Trash. Dependencies are regenerated with npm install, cargo build, pod install…" = "Las carpetas irán a la Papelera. Las dependencias se regeneran con npm install, cargo build, pod install…";
+"In projects" = "En proyectos";
+"%@ in inactive ones" = "%@ en inactivos";
+"In tools" = "En herramientas";
+"inactive %@ days" = "inactivo %@ días";
+"active today" = "activo hoy";
+"active yesterday" = "activo ayer";
+"active %@ days ago" = "activo hace %@ días";
+
+/* Privacy */
+"Search browsers" = "Buscar navegador";
+"History, cookies and browsing traces from your browsers." = "Historial, cookies y rastros de navegación de tus navegadores.";
+"Review your traces" = "Revisa tus rastros";
+"Safari, Chrome, Firefox, Edge, Brave, Arc and more. Nothing is deleted without your confirmation." = "Safari, Chrome, Firefox, Edge, Brave, Arc y más. Nada se borra sin tu confirmación.";
+"No traces" = "Sin rastros";
+"There's no browsing data to clean." = "No hay datos de navegación que limpiar.";
+"Remove traces" = "Eliminar rastros";
+"Remove the selected traces?" = "¿Eliminar los rastros seleccionados?";
+"You'll be signed out of websites whose cookies you remove. Browsers must be closed." = "Cerrarás sesión en las webs cuyas cookies elimines. Los navegadores deben estar cerrados.";
+"open: quit it to clean" = "abierto: ciérralo para limpiar";
+"Requires Full Disk Access" = "Requiere Acceso total al disco";
+
+/* Mac Status */
+"The monitor is only available when running MacCleaner.app" = "El monitor sólo está disponible al ejecutar MacCleaner.app";
+"Disk, memory and load in real time. Only measured while this view is open." = "Disco, memoria y carga en tiempo real. Sólo se mide con esta vista abierta.";
+"Disk" = "Disco";
+"free of %@" = "libres de %@";
+"Memory" = "Memoria";
+"of %@ · %@ pressure" = "de %1$@ · presión %2$@";
+"Swap" = "Swap";
+"of %@" = "de %@";
+"CPU" = "CPU";
+"load average · %@ cores" = "carga media · %@ núcleos";
+"Last 3 minutes" = "Últimos 3 minutos";
+"Series" = "Serie";
+"Background monitor" = "Monitor en segundo plano";
+"Alerts you to low disk space, memory pressure, high swap and accumulated junk. A low-priority process of about 2 MB." = "Te avisa de poco espacio, presión de memoria, swap alto y basura acumulada. Proceso de prioridad baja de unos 2 MB.";
+"Active (pid %@)" = "Activo (pid %@)";
+"Installed, stopped" = "Instalado, detenido";
+"Off" = "Desactivado";
+"Last scan %@: %@ reclaimable" = "Último análisis %1$@: %2$@ recuperables";
+"Open MacCleaner.app to turn it on." = "Abre MacCleaner.app para poder activarlo.";
+"normal" = "normal";
+"elevated" = "media";
+"critical" = "crítica";
+
+/* Maintenance */
+"One-off tasks that fix slowness and odd behavior." = "Tareas puntuales que resuelven lentitud y comportamientos extraños.";
+"%@ tasks selected" = "%@ tareas seleccionadas";
+"You'll be asked for the administrator password only once." = "Se pedirá la contraseña de administrador una sola vez.";
+"Running…" = "Ejecutando…";
+"Requires administrator" = "Requiere administrador";
+"Completed" = "Completada";
+"Error" = "Error";
+
+/* Login & Background */
+"Status" = "Estado";
+"Program" = "Programa";
+"Search services" = "Buscar servicio";
+"Agents and services that start on their own and use resources in the background." = "Agentes y servicios que arrancan solos y consumen recursos en segundo plano.";
+"Show system items" = "Mostrar del sistema";
+"Global agents and daemons require administrator privileges and are shown for information only." = "Los agentes globales y daemons requieren permisos de administrador y sólo se muestran como información.";
+"Loaded" = "Cargado";
+"Not loaded" = "No cargado";
+"at login" = "al iniciar";
+"always on" = "siempre activo";
+"Remove…" = "Eliminar…";
+"More actions for %@" = "Más acciones para %@";
+
+/* Processes */
+"Search processes" = "Buscar proceso";
+"What uses the most memory and CPU right now. Updates every 2 s." = "Lo que más memoria y CPU consume ahora mismo. Se actualiza cada 2 s.";
+"Quit" = "Salir";
+"Quit %@" = "Salir de %@";
+
+/* Uninstaller */
+"Source" = "Fuente";
+"Search apps" = "Buscar app";
+"All apps" = "Todas";
+"Intel only" = "Sólo Intel";
+"App Store" = "App Store";
+"Setapp" = "Setapp";
+"Some items couldn't be removed" = "Algunos elementos no se pudieron eliminar";
+"Removes apps completely, with their caches, preferences and containers." = "Elimina apps por completo, con sus cachés, preferencias y contenedores.";
+"Uninstall %@?" = "¿Desinstalar %@?";
+"Move to Trash (%@)" = "Mover a la Papelera (%@)";
+"The app and the selected leftovers will go to the Trash." = "La app y los restos seleccionados irán a la Papelera.";
+"Leftovers" = "Restos";
+"No leftovers found." = "No se encontraron restos.";
+"The app is open: quit it before uninstalling." = "La app está abierta: ciérrala antes de desinstalar.";
+"Uninstalling…" = "Desinstalando…";
+"Uninstall · %@" = "Desinstalar · %@";
+"Choose an app to see everything it takes up" = "Elige una app para ver todo lo que ocupa";
+
+/* App Leftovers */
+"Search leftovers" = "Buscar resto";
+"Data from apps that are no longer installed." = "Datos de apps que ya no están instaladas.";
+"Search again" = "Volver a buscar";
+"Find leftovers of deleted apps" = "Busca restos de apps eliminadas";
+"Containers, preferences and caches left behind when apps were deleted by dragging them to the Trash." = "Contenedores, preferencias y cachés que quedaron al borrar apps arrastrándolas a la Papelera.";
+"No leftovers" = "Sin restos";
+"There's no data from uninstalled apps." = "No hay datos de apps desinstaladas.";
+"Removing…" = "Eliminando…";
+"Remove leftovers" = "Eliminar restos";
+
+/* Extensions */
+"Type" = "Tipo";
+"Search extensions" = "Buscar extensión";
+"Plugins and add-ons installed on the system." = "Plugins y complementos instalados en el sistema.";
+"No extensions" = "Sin extensiones";
+"No third-party plugins or add-ons are installed." = "No hay plugins ni complementos de terceros instalados.";
+"User" = "Usuario";
+"System · requires administrator" = "Sistema · requiere administrador";
+"%@ extensions selected" = "%@ seleccionadas";
+
+/* Updates */
+"Checks for new versions of apps that update with Sparkle." = "Comprueba nuevas versiones de las apps que se actualizan con Sparkle.";
+"Check" = "Comprobar";
+"Find updates" = "Busca actualizaciones";
+"Queries the update feed of each compatible app. App Store and Setapp apps update from their own store." = "Consulta el canal de actualizaciones de cada app compatible. Las de App Store y Setapp se actualizan desde su tienda.";
+"All up to date" = "Todo al día";
+"%@ compatible apps were checked." = "Se comprobaron %@ apps compatibles.";
+"Open app" = "Abrir app";
+"Download" = "Descargar";
+
+/* Space Lens */
+"Interactive map of what takes up space. Click a segment to go into it." = "Mapa interactivo de lo que ocupa espacio. Haz clic en un sector para entrar.";
+"Back" = "Atrás";
+"Choose folder" = "Elegir carpeta";
+"Explore your home folder" = "Explora tu carpeta personal";
+"Works out what takes up space and shows it as an interactive map. You can choose another folder above." = "Calcula qué ocupa espacio y lo muestra como un mapa interactivo. Puedes elegir otra carpeta arriba.";
+"Analyze" = "Analizar";
+"Calculating…" = "Calculando…";
+"Other items" = "Otros elementos";
+
+/* Large & Old Files */
+"Modified" = "Modificación";
+"Last opened" = "Último acceso";
+"Search files" = "Buscar archivo";
+"Heavy or forgotten files in your home folder." = "Archivos pesados u olvidados en tu carpeta personal.";
+"> 50 MB" = "> 50 MB";
+"> 100 MB" = "> 100 MB";
+"> 500 MB" = "> 500 MB";
+"> 1 GB" = "> 1 GB";
+"Age" = "Antigüedad";
+"Any" = "Cualquiera";
+"> 1 month" = "> 1 mes";
+"> 6 months" = "> 6 meses";
+"> 1 year" = "> 1 año";
+"Find large and old files" = "Encuentra archivos grandes y antiguos";
+"Videos, disk images and forgotten downloads. Adjust size and age above." = "Vídeos, imágenes de disco y descargas olvidadas. Ajusta tamaño y antigüedad arriba.";
+"Nothing to review" = "Nada que revisar";
+"No files match those criteria." = "No hay archivos con esos criterios.";
+"%@ · modified %@" = "%1$@ · modificado %2$@";
+"All" = "Todos";
+
+/* Duplicates */
+"Duplicated space" = "Espacio duplicado";
+"Copies" = "Copias";
+"Byte-for-byte identical copies. At least one is always kept." = "Copias idénticas byte a byte. Siempre se conserva al menos una.";
+"Find duplicate files" = "Busca archivos duplicados";
+"Compares size and content in your home folder (files over 1 MB)." = "Compara por tamaño y contenido en tu carpeta personal (archivos de más de 1 MB).";
+"No duplicates" = "Sin duplicados";
+"There are no identical copies." = "No hay copias idénticas.";
+"Groups" = "Grupos";
+
+/* Monitor notifications */
+"Low disk space" = "Poco espacio en disco";
+"%@ free (%@)." = "Quedan %1$@ libres (%2$@).";
+"High memory pressure" = "Presión de memoria alta";
+"The system is running out of memory. Quit apps you're not using." = "El sistema se está quedando sin memoria. Cierra apps que no uses.";
+"High swap usage" = "Uso de swap elevado";
+"%@ in swap." = "%@ en swap.";
+"Junk ready to clean" = "Hay basura para limpiar";
+"%@ can be reclaimed. Open MacCleaner to review it." = "%@ recuperables. Abre MacCleaner para revisarlo.";
+
+/* Singular and plural forms (see locCount) */
+"%@ item" = "%@ elemento";
+"%@ file" = "%@ archivo";
+"%@ copy" = "%@ copia";
+"%@ copies" = "%@ copias";
+"%@ failure" = "%@ fallo";
+"inactive %@ day" = "inactivo %@ día";
+"active %@ day ago" = "activo hace %@ día";
+"%@ task selected" = "%@ tarea seleccionada";
+"%@ extension selected" = "%@ seleccionada";
+"%@ compatible app was checked." = "Se comprobó %@ app compatible.";
+"load average · %@ core" = "carga media · %@ núcleo";
+"In use by an open app · %@" = "En uso por una app abierta · %@";
+"%@ · %@" = "%1$@ · %2$@";
+"Move %@ to the Trash?" = "¿Mover %@ a la Papelera?";

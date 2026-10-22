@@ -1,0 +1,12 @@
+[package]
+name = "maccleaner-ffi"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+maccleaner-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
