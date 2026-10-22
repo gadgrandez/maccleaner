@@ -113,3 +113,12 @@ or architectures from apps (it breaks code signatures).
 
 The screenshots in this README were generated from a fake home folder
 (`scripts/make-demo-home.sh`) with `scripts/snapshot.sh`, so they contain no personal data.
+
+## License
+
+Copyright © 2026 Gad Grandez.
+
+MacCleaner is free software: you can redistribute it and/or modify it under the terms of the
+[GNU General Public License](LICENSE) as published by the Free Software Foundation, either
+version 3 of the License, or (at your option) any later version. It is distributed in the hope
+that it will be useful, but WITHOUT ANY WARRANTY; see the license for details.
