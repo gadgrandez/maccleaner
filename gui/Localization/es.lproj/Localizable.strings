@@ -334,3 +334,12 @@
 "In use by an open app · %@" = "En uso por una app abierta · %@";
 "%@ · %@" = "%1$@ · %2$@";
 "Move %@ to the Trash?" = "¿Mover %@ a la Papelera?";
+
+/* Leftovers of deleted apps: launchd jobs and helpers */
+"System service" = "Servicio del sistema";
+"Privileged helper" = "Asistente con privilegios";
+"App scripts" = "Scripts de la app";
+"Requires administrator password" = "Pide la contraseña de administrador";
+"app deleted" = "app eliminada";
+"Stop" = "Detener";
+"It keeps running until you log out because its app was deleted." = "Sigue en marcha hasta que cierres sesión porque su app se eliminó.";

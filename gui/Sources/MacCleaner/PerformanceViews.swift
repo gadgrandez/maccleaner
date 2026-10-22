@@ -126,6 +126,14 @@ final class LaunchStore {
         guard await alerts.run({ try await Core.removeLaunchItem(plistPath: item.plistPath) }) != nil else { return }
         await load()
     }
+
+    /// Stops a job left running by a deleted app.
+    func stop(_ item: LaunchItem) async {
+        busy.insert(item.id)
+        defer { busy.remove(item.id) }
+        guard await alerts.run({ try await Core.stopLaunchItem(label: item.label) }) != nil else { return }
+        await load()
+    }
 }
 
 struct LaunchItemsView: View {
@@ -168,13 +176,20 @@ struct LaunchItemsView: View {
                 .accessibilityLabel(item.loaded ? loc("Loaded") : loc("Not loaded"))
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.appName ?? item.label).lineLimit(1)
-                Text(item.program ?? item.label).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Text(item.program ?? item.parentBundleId ?? item.label).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 8)
+            if item.orphaned { Pill(text: loc("app deleted"), color: .red) }
             if item.runAtLoad { Pill(text: loc("at login"), color: .blue) }
             if item.keepAlive { Pill(text: loc("always on"), color: .orange) }
             if store.busy.contains(item.id) {
                 ProgressView().controlSize(.small)
+            } else if item.plistPath.isEmpty {
+                // Registered by an app that no longer exists: there is no file, only the running job.
+                Button(loc("Stop")) { Task { await store.stop(item) } }
+                    .controlSize(.small)
+                    .help(loc("It keeps running until you log out because its app was deleted."))
             } else if item.removable {
                 Toggle("", isOn: Binding(get: { item.enabled }, set: { v in Task { await store.setEnabled(item, v) } }))
                     .toggleStyle(.switch).labelsHidden().controlSize(.small)

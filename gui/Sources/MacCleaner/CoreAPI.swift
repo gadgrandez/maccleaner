@@ -61,6 +61,10 @@ extension Core {
         try await call(argument: plistPath) { mcl_launch_item_remove($0, 0) }
     }
 
+    static func stopLaunchItem(label: String) async throws -> Bool {
+        try await call(argument: label) { mcl_launch_item_stop($0) }
+    }
+
     static func maintenanceTasks() async throws -> [MaintenanceTask] { try await call { mcl_maintenance_tasks() } }
 
     static func runMaintenance(ids: [String]) async throws -> [TaskResult] {

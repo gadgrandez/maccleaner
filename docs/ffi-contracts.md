@@ -25,9 +25,22 @@ AppInfo { name, bundle_id?: string, version?: string, path, bytes: u64, is_apple
           archs: [string]   // e.g. ["arm64","x86_64"] of the main executable
         }
 LeftoverItem { path, kind: "cache"|"preferences"|"app_support"|"container"|"group_container"|
-               "saved_state"|"logs"|"launch_agent"|"cookies"|"webkit"|"http_storage"|"other", bytes: u64 }
+               "saved_state"|"logs"|"launch_agent"|"cookies"|"webkit"|"http_storage"|"app_scripts"|
+               "launch_daemon"|"privileged_helper"|"other", bytes: u64,
+               requires_admin: bool /* system-wide launchd job or helper */ }
 AppLeftovers { app: AppInfo, items: [LeftoverItem], total_bytes: u64 }
-OrphanGroup { id: string /* bundle id or name */, items: [LeftoverItem], total_bytes: u64 }
+OrphanGroup { id: string /* shortest bundle id of the group */, items: [LeftoverItem], total_bytes: u64 }
+```
+
+Orphans are grouped by bundle id: `<TEAMID>.` and `group.` prefixes are ignored and ids that extend
+another one (`com.foo.app.helper`) join its group. Folders in Application Support, Caches and Logs
+named after the app (`CleanMyMac_5_Setapp` for `com.macpaw.CleanMyMac-setapp`) join it too, unless an
+installed app has that name. launchd jobs whose program is gone, and privileged helpers no daemon plist
+launches any more, are leftovers and do not count as installed. `mcl_apps_uninstall` without `app_path`
+removes the selected `requires_admin` items with a single authorization dialog: each job is booted out
+of launchd and its file is moved to the user's Trash.
+
+```text
 ExtensionItem { name, path, kind: "preference_pane"|"quicklook"|"spotlight"|"internet_plugin"|
                 "screen_saver"|"services"|"mail_bundle", scope: "user"|"system", bytes: u64, removable: bool }
 ```
@@ -38,15 +51,19 @@ ExtensionItem { name, path, kind: "preference_pane"|"quicklook"|"spotlight"|"int
 char *mcl_launch_items(void);                                  /* -> [LaunchItem] */
 char *mcl_launch_item_set_enabled(const char *label, int enabled); /* -> LaunchItem */
 char *mcl_launch_item_remove(const char *plist_path, int dry_run); /* -> CleanReport */
+char *mcl_launch_item_stop(const char *label);                 /* orphaned job without plist -> true */
 char *mcl_maintenance_tasks(void);                             /* -> [MaintenanceTask] */
 char *mcl_maintenance_run(const char *ids_json);               /* ["flush_dns",...] -> [TaskResult] */
 char *mcl_top_processes(uint32_t limit);                       /* -> [ProcessInfo] by memory desc. */
 ```
 
 ```text
-LaunchItem { label, plist_path, program?: string, scope: "user_agent"|"global_agent"|"global_daemon",
+LaunchItem { label, plist_path /* "" for jobs registered by an app */, program?: string,
+             scope: "user_agent"|"global_agent"|"global_daemon",
              run_at_load: bool, keep_alive: bool, enabled: bool, loaded: bool, pid?: i32,
-             app_name?: string /* containing app inferred from program */, removable: bool }
+             app_name?: string /* containing app inferred from program */, removable: bool,
+             orphaned: bool /* program or registering app is gone */,
+             parent_bundle_id?: string /* app that registered it through SMAppService */ }
 MaintenanceTask { id, name, description, requires_admin: bool, icon: string /* SF Symbol */ }
 TaskResult { id, ok: bool, output: string, error?: string }
 ProcessInfo { pid: i32, name, path?: string, memory: u64 /* phys_footprint */, cpu_time_ns: u64, user_owned: bool }

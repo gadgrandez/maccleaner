@@ -132,6 +132,7 @@ struct LeftoverItem: Codable, Identifiable, Hashable, Sendable {
     let path: String
     let kind: String
     let bytes: UInt64
+    let requiresAdmin: Bool
     var id: String { path }
     var name: String { (path as NSString).lastPathComponent }
 
@@ -145,10 +146,18 @@ struct LeftoverItem: Codable, Identifiable, Hashable, Sendable {
         case "saved_state": loc("Saved state")
         case "logs": loc("Logs")
         case "launch_agent": loc("Launch agent")
+        case "launch_daemon": loc("System service")
+        case "privileged_helper": loc("Privileged helper")
+        case "app_scripts": loc("App scripts")
         case "cookies": loc("Cookies")
         case "webkit", "http_storage": loc("Web data")
         default: loc("Other")
         }
+    }
+
+    /// Kind, plus a warning when removing it asks for the administrator password.
+    var detail: String {
+        requiresAdmin ? "\(kindTitle) · \(loc("Requires administrator password"))" : kindTitle
     }
 }
 
@@ -212,7 +221,11 @@ struct LaunchItem: Codable, Identifiable, Hashable, Sendable {
     let pid: Int32?
     let appName: String?
     let removable: Bool
-    var id: String { plistPath }
+    /// Its program, or the app that registered it, no longer exists.
+    let orphaned: Bool
+    /// App that registered it through SMAppService (such jobs have no plist file).
+    let parentBundleId: String?
+    var id: String { plistPath.isEmpty ? "\(scope)/\(label)" : plistPath }
 
     var scopeTitle: String {
         switch scope {

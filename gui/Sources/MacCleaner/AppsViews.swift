@@ -278,7 +278,7 @@ struct LeftoversView: View {
                                 CardSection(title: group.id, trailing: formatBytes(group.totalBytes)) {
                                     ForEach(group.items) { item in
                                         SelectableRow(isOn: store.selectedOrphans.contains(item.path), title: item.name,
-                                                      subtitle: item.kindTitle, bytes: item.bytes, path: item.path) {
+                                                      subtitle: item.detail, bytes: item.bytes, path: item.path) {
                                             FileIcon(path: item.path, size: 22)
                                         } toggle: { store.selectedOrphans.toggle(item.path) }
                                     }

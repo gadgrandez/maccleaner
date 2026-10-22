@@ -12,7 +12,9 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::clean::{CleanOutcome, CleanReport, CleanRequest};
+use crate::codesign;
 use crate::fsutil;
+use crate::performance::{self, missing_program, read_plist, sh_quote};
 use crate::rules::{Action, home_dir};
 use crate::trash;
 
@@ -52,6 +54,9 @@ pub enum LeftoverKind {
     Cookies,
     Webkit,
     HttpStorage,
+    AppScripts,
+    LaunchDaemon,
+    PrivilegedHelper,
     Other,
 }
 
@@ -69,6 +74,9 @@ impl LeftoverKind {
             Self::Cookies => "cookies",
             Self::Webkit => "webkit",
             Self::HttpStorage => "http_storage",
+            Self::AppScripts => "app_scripts",
+            Self::LaunchDaemon => "launch_daemon",
+            Self::PrivilegedHelper => "privileged_helper",
             Self::Other => "other",
         }
     }
@@ -79,6 +87,9 @@ pub struct LeftoverItem {
     pub path: String,
     pub kind: LeftoverKind,
     pub bytes: u64,
+    /// System-wide launchd job or helper: removing it asks for an administrator password.
+    #[serde(default)]
+    pub requires_admin: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -381,6 +392,7 @@ const LEFTOVER_DIRS: &[(&str, LeftoverKind, Matcher)] = &[
     ("Cookies", LeftoverKind::Cookies, Matcher::Suffix(".binarycookies")),
     ("WebKit", LeftoverKind::Webkit, Matcher::Id),
     ("HTTPStorages", LeftoverKind::HttpStorage, Matcher::Id),
+    ("Application Scripts", LeftoverKind::AppScripts, Matcher::Contains),
 ];
 
 /// Names too generic or shared to search for leftovers by name.
@@ -435,11 +447,13 @@ fn entries(dir: &Path) -> Vec<(String, PathBuf)> {
 
 /// `others`: installed ids not belonging to the app; an `<id>.*` that belongs to another installed
 /// app with a more specific id (e.g. `<id>.for.testing`) is not taken as a leftover.
+/// `shared`: app groups other installed apps are entitled to; their containers are kept.
 fn find_leftovers(
     library: &Path,
     bundle_id: Option<&str>,
     names: &[String],
     others: &HashSet<String>,
+    shared: &HashSet<String>,
 ) -> Vec<(PathBuf, LeftoverKind)> {
     let id = bundle_id.filter(|id| valid_bundle_id(id)).map(str::to_lowercase);
     let names: Vec<String> = names
@@ -451,10 +465,11 @@ fn find_leftovers(
     for (dir, kind, matcher) in LEFTOVER_DIRS {
         for (name, path) in entries(&library.join(dir)) {
             let lower = name.to_lowercase();
-            let foreign = id.as_deref().is_some_and(|id| {
-                let eid = entry_id(&lower);
-                others.iter().any(|o| o.len() > id.len() && label_prefix(id, o) && label_prefix(o, eid))
-            });
+            let foreign = shared.contains(&lower)
+                || id.as_deref().is_some_and(|id| {
+                    let eid = entry_id(&lower);
+                    others.iter().any(|o| o.len() > id.len() && label_prefix(id, o) && label_prefix(o, eid))
+                });
             if !foreign && leftover_match(*matcher, &lower, id.as_deref(), &names) {
                 out.push((path, *kind));
             }
@@ -472,7 +487,8 @@ fn leftovers_in(roots: &Roots, app_path: &Path) -> Result<AppLeftovers, String> 
     let mut own = HashSet::new();
     bundle_ids(app_path, &mut own);
     let others: HashSet<String> = app_ids(roots).difference(&own).cloned().collect();
-    let found = find_leftovers(&roots.user_library(), bundle.info.bundle_id.as_deref(), &bundle.names, &others);
+    let shared = app_groups(roots, Some(app_path));
+    let found = find_leftovers(&roots.user_library(), bundle.info.bundle_id.as_deref(), &bundle.names, &others, &shared);
     let mut paths = vec![app_path.to_path_buf()];
     paths.extend(found.iter().map(|(p, _)| p.clone()));
     let mut sizes = fsutil::usages(&paths).into_iter().map(|u| u.bytes);
@@ -481,7 +497,7 @@ fn leftovers_in(roots: &Roots, app_path: &Path) -> Result<AppLeftovers, String> 
     let mut items: Vec<LeftoverItem> = found
         .into_iter()
         .zip(sizes)
-        .map(|((p, kind), bytes)| LeftoverItem { path: p.to_string_lossy().into_owned(), kind, bytes })
+        .map(|((p, kind), bytes)| LeftoverItem { path: p.to_string_lossy().into_owned(), kind, bytes, requires_admin: false })
         .collect();
     items.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.path.cmp(&b.path)));
     let total_bytes = items.iter().map(|i| i.bytes).sum();
@@ -499,6 +515,15 @@ const ORPHAN_DIRS: &[(&str, LeftoverKind)] = &[
     ("Saved Application State", LeftoverKind::SavedState),
     ("HTTPStorages", LeftoverKind::HttpStorage),
     ("WebKit", LeftoverKind::Webkit),
+    ("Group Containers", LeftoverKind::GroupContainer),
+    ("Application Scripts", LeftoverKind::AppScripts),
+];
+
+/// Folders whose entries are named after the app rather than its id (`CleanMyMac_5_Setapp`).
+const NAMED_ORPHAN_DIRS: &[(&str, LeftoverKind)] = &[
+    ("Application Support", LeftoverKind::AppSupport),
+    ("Caches", LeftoverKind::Cache),
+    ("Logs", LeftoverKind::Logs),
 ];
 
 /// Prefixes (lowercase) of system ids or shared components.
@@ -514,6 +539,8 @@ const SYSTEM_ID_PREFIXES: &[&str] = &[
     "org.llvm.",
     "org.python.",
     "com.github.electron",
+    // Shortcuts (formerly Workflow, bought by Apple).
+    "is.workflow.",
 ];
 
 /// `tld.company.product`: at least three labels without spaces and a lowercase TLD.
@@ -525,10 +552,9 @@ fn is_reverse_dns(id: &str) -> bool {
         && labels[0].chars().all(|c| c.is_ascii_lowercase())
 }
 
-/// Ids (lowercase) of an app and of the bundles it contains (helpers, extensions...).
-fn bundle_ids(app: &Path, out: &mut HashSet<String>) {
-    let id_of = |p: &Path| info_plist(p).and_then(|d| dict_str(&d, "CFBundleIdentifier")).map(|s| s.to_lowercase());
-    out.extend(id_of(app));
+/// An app and the bundles it contains (helpers, extensions, login items...).
+fn inner_bundles(app: &Path) -> Vec<PathBuf> {
+    let mut out = vec![app.to_path_buf()];
     for sub in [
         "Contents/Library/LoginItems",
         "Contents/Library/LaunchServices",
@@ -538,49 +564,162 @@ fn bundle_ids(app: &Path, out: &mut HashSet<String>) {
         "Contents/XPCServices",
         "Contents/Frameworks",
     ] {
-        for (_, p) in entries(&app.join(sub)) {
-            if p.extension().is_some_and(|e| e != "framework") {
-                out.extend(id_of(&p));
-            }
-        }
+        out.extend(entries(&app.join(sub)).into_iter().map(|(_, p)| p).filter(|p| p.extension().is_some_and(|e| e != "framework")));
+    }
+    out
+}
+
+/// Ids (lowercase) of an app and of the bundles it contains.
+fn bundle_ids(app: &Path, out: &mut HashSet<String>) {
+    for bundle in inner_bundles(app) {
+        out.extend(info_plist(&bundle).and_then(|d| dict_str(&d, "CFBundleIdentifier")).map(|s| s.to_lowercase()));
     }
 }
 
-/// Ids of installed apps and their inner bundles.
+/// App groups (lowercase) that installed apps (except `skip`) and their inner bundles are entitled
+/// to. Their shared containers may be named after another vendor (WhatsApp uses
+/// `group.com.facebook.family`).
+fn app_groups(roots: &Roots, skip: Option<&Path>) -> HashSet<String> {
+    let mut groups = HashSet::new();
+    for (app, _) in app_bundles(roots).into_iter().filter(|(a, _)| Some(a.as_path()) != skip) {
+        for bundle in inner_bundles(&app) {
+            let Some(exe) = info_plist(&bundle).and_then(|d| dict_str(&d, "CFBundleExecutable")) else { continue };
+            if !exe.contains('/') {
+                let groups_of = codesign::app_groups(&bundle.join("Contents/MacOS").join(exe));
+                groups.extend(groups_of.into_iter().map(|g| g.to_lowercase()));
+            }
+        }
+    }
+    groups
+}
+
+/// Ids of installed apps and their inner bundles, plus active system and driver extensions
+/// (they outlive the app that installed them and still use its containers).
 fn app_ids(roots: &Roots) -> HashSet<String> {
     let mut ids = HashSet::new();
     for (app, _) in app_bundles(roots) {
         bundle_ids(&app, &mut ids);
     }
-    ids
-}
-
-/// Ids that count as installed: apps, their inner bundles and registered agents/helpers.
-fn installed_ids(roots: &Roots) -> HashSet<String> {
-    let mut ids = app_ids(roots);
-    for dir in [
-        roots.user_library().join("LaunchAgents"),
-        roots.library.join("LaunchAgents"),
-        roots.library.join("LaunchDaemons"),
-        roots.library.join("PrivilegedHelperTools"),
-    ] {
+    for dir in real_dirs(&roots.library.join("SystemExtensions")) {
         for (name, _) in entries(&dir) {
             let lower = name.to_lowercase();
-            ids.insert(lower.strip_suffix(".plist").unwrap_or(&lower).to_owned());
+            if let Some(id) = lower.strip_suffix(".systemextension").or_else(|| lower.strip_suffix(".dext")) {
+                ids.insert(id.to_owned());
+            }
         }
     }
     ids
 }
 
-/// Id inferred from an entry's name (without `.plist`, `.savedState`...).
+/// Ids (lowercase) of the apps installed in the usual folders and of their inner bundles.
+pub fn installed_app_ids() -> HashSet<String> {
+    Roots::real().map(|r| app_ids(&r)).unwrap_or_default()
+}
+
+/// launchd domain a job is booted out of before its file is removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JobDomain {
+    System,
+    User,
+}
+
+/// A launchd job file: an agent or daemon plist, or a privileged helper tool.
+#[derive(Debug, Clone)]
+struct JobFile {
+    label: String,
+    path: PathBuf,
+    kind: LeftoverKind,
+    domain: JobDomain,
+    /// Outside the home folder: removing it needs administrator privileges.
+    admin: bool,
+    /// Its program no longer exists, or (helpers) no daemon plist launches it any more.
+    dead: bool,
+}
+
+fn job_files(roots: &Roots) -> Vec<JobFile> {
+    let mut jobs = Vec::new();
+    // Labels and program names launched by daemon plists: the helpers they keep alive.
+    let mut launched: HashSet<String> = HashSet::new();
+    for (dir, kind, domain, admin) in [
+        (roots.user_library().join("LaunchAgents"), LeftoverKind::LaunchAgent, JobDomain::User, false),
+        (roots.library.join("LaunchAgents"), LeftoverKind::LaunchAgent, JobDomain::User, true),
+        (roots.library.join("LaunchDaemons"), LeftoverKind::LaunchDaemon, JobDomain::System, true),
+    ] {
+        for (name, path) in entries(&dir) {
+            let Some(stem) = name.strip_suffix(".plist") else { continue };
+            let (label, program) = match read_plist(&path) {
+                Some(info) => (info.label, info.program),
+                None => (stem.to_owned(), None),
+            };
+            if kind == LeftoverKind::LaunchDaemon {
+                launched.insert(label.to_lowercase());
+                launched.extend(program.as_deref().and_then(|p| Path::new(p).file_name()).map(|n| n.to_string_lossy().to_lowercase()));
+            }
+            let dead = program.as_deref().is_some_and(missing_program);
+            jobs.push(JobFile { label, path, kind, domain, admin, dead });
+        }
+    }
+    for (name, path) in entries(&roots.library.join("PrivilegedHelperTools")) {
+        let dead = !launched.contains(&name.to_lowercase());
+        jobs.push(JobFile { label: name, path, kind: LeftoverKind::PrivilegedHelper, domain: JobDomain::System, admin: true, dead });
+    }
+    jobs
+}
+
+/// What counts as installed when looking for orphans.
+struct Installed {
+    /// Apps, their inner bundles and the launchd jobs that still work.
+    ids: HashSet<String>,
+    /// `tld.company` of those ids.
+    vendors: HashSet<String>,
+    /// App groups installed apps are entitled to: their shared containers are in use.
+    groups: HashSet<String>,
+    /// Dead launchd jobs whose app is gone.
+    orphan_jobs: Vec<JobFile>,
+}
+
+impl Installed {
+    fn scan(roots: &Roots) -> Self {
+        let jobs = job_files(roots);
+        let mut ids = app_ids(roots);
+        ids.extend(jobs.iter().filter(|j| !j.dead).map(|j| j.label.to_lowercase()));
+        let vendors = ids.iter().filter(|i| is_reverse_dns(i)).filter_map(|i| vendor(i).map(str::to_owned)).collect();
+        let mut installed = Self { ids, vendors, groups: app_groups(roots, None), orphan_jobs: Vec::new() };
+        installed.orphan_jobs = jobs.into_iter().filter(|j| j.dead && installed.is_orphan(&j.label)).collect();
+        installed
+    }
+
+    fn is_orphan(&self, id: &str) -> bool {
+        is_orphan(id, &self.ids, &self.vendors)
+    }
+}
+
+/// Id inferred from an entry's name: without `.plist`, `.savedState`... and without the
+/// `<TEAMID>.` and `group.` prefixes of shared containers. What is left of a group may be shorter
+/// than an app id (`group.com.docker` gives `com.docker`), which never counts as an orphan.
 fn entry_id(name: &str) -> &str {
+    let mut id = name;
     for suffix in [".plist", ".savedstate", ".binarycookies"] {
         let cut = name.len().saturating_sub(suffix.len());
         if name.is_char_boundary(cut) && name[cut..].eq_ignore_ascii_case(suffix) {
-            return &name[..cut];
+            id = &name[..cut];
+            break;
         }
     }
-    name
+    if let Some((first, rest)) = id.split_once('.') {
+        if is_team_id(first) && rest.contains('.') {
+            id = rest;
+        }
+    }
+    match id.split_once('.') {
+        Some((first, rest)) if first.eq_ignore_ascii_case("group") || first.eq_ignore_ascii_case("groups") => rest,
+        _ => id,
+    }
+}
+
+/// Apple developer team id: ten letters and digits, at least one of them a digit.
+fn is_team_id(s: &str) -> bool {
+    s.len() == 10 && s.bytes().all(|b| b.is_ascii_alphanumeric()) && s.bytes().any(|b| b.is_ascii_digit())
 }
 
 /// Prefix with a label separator: `com.foo.app` covers `com.foo.app.helper`.
@@ -605,31 +744,126 @@ fn is_orphan(id: &str, installed: &HashSet<String>, vendors: &HashSet<String>) -
         && !installed.iter().any(|i| label_prefix(i, &lower) || label_prefix(&lower, i))
 }
 
+/// Product name of an id, used to find folders named after the app: `com.macpaw.CleanMyMac-setapp`
+/// gives `cleanmymac`. Short or generic names give none.
+fn product_token(id: &str) -> Option<String> {
+    let label = id.split('.').nth(2)?.to_lowercase();
+    let token: String = label.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    (token.len() >= 6 && !GENERIC_NAMES.contains(&token.as_str())).then_some(token)
+}
+
+/// `cleanmymac_5_setapp` or `cleanmymac x` for the token `cleanmymac`, but not `cleanmymacs`.
+fn named_after(entry: &str, token: &str) -> bool {
+    entry.strip_prefix(token).is_some_and(|rest| rest.chars().next().is_none_or(|c| !c.is_ascii_alphabetic()))
+}
+
+/// Names of installed apps, lowercase and without spaces or punctuation.
+fn installed_names(roots: &Roots) -> Vec<String> {
+    let squash = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
+    let mut names = Vec::new();
+    for (app, _) in app_bundles(roots) {
+        names.extend(app.file_stem().map(|s| squash(&s.to_string_lossy())));
+        if let Some(d) = info_plist(&app) {
+            names.extend(["CFBundleName", "CFBundleDisplayName"].iter().filter_map(|k| dict_str(&d, k)).map(|n| squash(&n)));
+        }
+    }
+    names.retain(|n| n.len() >= 3);
+    names
+}
+
+/// Maps every id to the shortest id it extends: `com.foo.app.helper` belongs to `com.foo.app`.
+fn group_roots(ids: impl Iterator<Item = String>) -> HashMap<String, String> {
+    let mut unique: Vec<String> = ids.collect::<HashSet<_>>().into_iter().collect();
+    unique.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+    let mut roots: Vec<String> = Vec::new();
+    let mut out = HashMap::new();
+    for id in unique {
+        let root = roots.iter().find(|r| label_prefix(r, &id)).cloned().unwrap_or_else(|| {
+            roots.push(id.clone());
+            id.clone()
+        });
+        out.insert(id, root);
+    }
+    out
+}
+
+struct Found {
+    id: String,
+    path: PathBuf,
+    kind: LeftoverKind,
+    admin: bool,
+}
+
 fn orphans_in(roots: &Roots) -> Vec<OrphanGroup> {
-    let installed = installed_ids(roots);
-    let vendors: HashSet<String> =
-        installed.iter().filter(|i| is_reverse_dns(i)).filter_map(|i| vendor(i).map(str::to_owned)).collect();
+    let installed = Installed::scan(roots);
     let library = roots.user_library();
-    let mut found: Vec<(String, PathBuf, LeftoverKind)> = Vec::new();
+    let mut found: Vec<Found> = Vec::new();
     for (dir, kind) in ORPHAN_DIRS {
         for (name, path) in entries(&library.join(dir)) {
+            if installed.groups.contains(&name.to_lowercase()) {
+                continue;
+            }
             let id = entry_id(&name);
-            if is_orphan(id, &installed, &vendors) {
-                found.push((id.to_owned(), path, *kind));
+            if installed.is_orphan(id) {
+                found.push(Found { id: id.to_owned(), path, kind: *kind, admin: false });
             }
         }
     }
-    let paths: Vec<PathBuf> = found.iter().map(|(_, p, _)| p.clone()).collect();
+    for job in &installed.orphan_jobs {
+        found.push(Found { id: job.label.clone(), path: job.path.clone(), kind: job.kind, admin: job.admin });
+    }
+    let root_of = group_roots(found.iter().map(|f| f.id.to_lowercase()));
+
+    // Folders named after an orphaned app join its group, unless an installed app has that name.
+    let names = installed_names(roots);
+    let mut tokens: Vec<(String, String)> = root_of
+        .values()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .filter_map(|root| product_token(root).map(|t| (t, root.clone())))
+        .filter(|(t, _)| !names.iter().any(|n| n.starts_with(t.as_str()) || t.starts_with(n.as_str())))
+        .collect();
+    tokens.sort();
+    let taken: HashSet<PathBuf> = found.iter().map(|f| f.path.clone()).collect();
+    for (dir, kind) in NAMED_ORPHAN_DIRS {
+        for (name, path) in entries(&library.join(dir)) {
+            let lower = name.to_lowercase();
+            if taken.contains(&path) || is_reverse_dns(entry_id(&name)) || protected_name(&lower) {
+                continue;
+            }
+            if let Some((_, root)) = tokens.iter().find(|(t, _)| named_after(&lower, t)) {
+                found.push(Found { id: root.clone(), path, kind: *kind, admin: false });
+            }
+        }
+    }
+
+    let paths: Vec<PathBuf> = found.iter().map(|f| f.path.clone()).collect();
     let mut groups: Vec<OrphanGroup> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
-    for ((id, path, kind), u) in found.into_iter().zip(fsutil::usages(&paths)) {
-        let i = *index.entry(id.to_lowercase()).or_insert_with(|| {
-            groups.push(OrphanGroup { id: id.clone(), items: Vec::new(), total_bytes: 0 });
+    // Display ids keep their original case: the first entry whose id is the group's root.
+    let mut display: HashMap<String, String> = HashMap::new();
+    for f in &found {
+        let lower = f.id.to_lowercase();
+        if root_of.get(&lower) == Some(&lower) {
+            display.entry(lower).or_insert_with(|| f.id.clone());
+        }
+    }
+    for (f, u) in found.into_iter().zip(fsutil::usages(&paths)) {
+        let lower = f.id.to_lowercase();
+        let root = root_of.get(&lower).cloned().unwrap_or(lower);
+        let i = *index.entry(root.clone()).or_insert_with(|| {
+            let id = display.get(&root).cloned().unwrap_or_else(|| root.clone());
+            groups.push(OrphanGroup { id, items: Vec::new(), total_bytes: 0 });
             groups.len() - 1
         });
         let g = &mut groups[i];
         g.total_bytes += u.bytes;
-        g.items.push(LeftoverItem { path: path.to_string_lossy().into_owned(), kind, bytes: u.bytes });
+        g.items.push(LeftoverItem {
+            path: f.path.to_string_lossy().into_owned(),
+            kind: f.kind,
+            bytes: u.bytes,
+            requires_admin: f.admin,
+        });
     }
     for g in &mut groups {
         g.items.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.path.cmp(&b.path)));
@@ -764,7 +998,27 @@ fn execute(checked: Vec<Checked>, dry_run: bool, gate_first: bool, remove: Remov
     report
 }
 
-fn uninstall_in(roots: &Roots, req: &UninstallRequest, remove: Remover) -> CleanReport {
+/// A dead system-wide launchd job, removed with administrator privileges.
+#[derive(Debug, Clone)]
+struct JobRemoval {
+    label: String,
+    path: PathBuf,
+    domain: JobDomain,
+}
+
+/// Removes all the jobs with a single authorization dialog; one result per job.
+type AdminRemover<'a> = &'a dyn Fn(&[JobRemoval]) -> Vec<Result<(), String>>;
+
+/// The orphan detection reports this system-wide job right now.
+fn orphan_job<'a>(installed: &'a Installed, raw: &str) -> Option<&'a JobFile> {
+    let path = plain_abs(raw).ok()?;
+    let parent = canon_parent(&path).ok()?;
+    installed.orphan_jobs.iter().find(|job| {
+        job.admin && job.path.file_name() == path.file_name() && canon_parent(&job.path).is_ok_and(|p| p == parent)
+    })
+}
+
+fn uninstall_in(roots: &Roots, req: &UninstallRequest, remove: Remover, admin: AdminRemover) -> CleanReport {
     let mut checked: Vec<Checked> = Vec::new();
     let mut app_id = None;
     if let Some(raw) = &req.app_path {
@@ -774,12 +1028,70 @@ fn uninstall_in(roots: &Roots, req: &UninstallRequest, remove: Remover) -> Clean
         });
         checked.push((raw.clone(), v));
     }
+    // System-wide jobs are only removed as orphans, never as part of an app's uninstallation.
+    let outside_home = req.leftover_paths.iter().any(|raw| !Path::new(raw).starts_with(&roots.home));
+    let installed = (req.app_path.is_none() && outside_home).then(|| Installed::scan(roots));
+    let mut jobs: Vec<JobRemoval> = Vec::new();
     for raw in &req.leftover_paths {
-        let v = validate_leftover(roots, raw, app_id.as_deref()).map(|(p, k)| (p, k.as_str().to_string()));
+        let v = match installed.as_ref().and_then(|i| orphan_job(i, raw)) {
+            Some(job) => {
+                jobs.push(JobRemoval { label: job.label.clone(), path: job.path.clone(), domain: job.domain });
+                Ok((job.path.clone(), job.kind.as_str().to_string()))
+            }
+            None => validate_leftover(roots, raw, app_id.as_deref()).map(|(p, k)| (p, k.as_str().to_string())),
+        };
         checked.push((raw.clone(), v));
     }
+    let admin_results: HashMap<PathBuf, Result<(), String>> = if req.dry_run || jobs.is_empty() {
+        HashMap::new()
+    } else {
+        jobs.iter().map(|j| j.path.clone()).zip(admin(&jobs)).collect()
+    };
+    let remover = |p: &Path| admin_results.get(p).cloned().unwrap_or_else(|| remove(p));
     // If the app cannot be removed, its data is kept.
-    execute(checked, req.dry_run, req.app_path.is_some(), remove)
+    execute(checked, req.dry_run, req.app_path.is_some(), &remover)
+}
+
+/// Free name for `path` in the Trash; `mv -n` never overwrites anyway.
+fn trash_destination(trash: &Path, path: &Path) -> PathBuf {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let plain = trash.join(&name);
+    if fs::symlink_metadata(&plain).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+        return plain;
+    }
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    trash.join(format!("{name} {secs}"))
+}
+
+/// Shell command that boots the job out of launchd and moves its file to the user's Trash.
+fn job_removal_script(job: &JobRemoval, dest: &Path, uid: u32) -> String {
+    let target = match job.domain {
+        JobDomain::System => format!("system/{}", job.label),
+        JobDomain::User => format!("gui/{uid}/{}", job.label),
+    };
+    let src = sh_quote(&job.path.to_string_lossy());
+    let dest = sh_quote(&dest.to_string_lossy());
+    format!(
+        "/bin/launchctl bootout {} 2>/dev/null; /bin/mv -n {src} {dest} && [ ! -e {src} ] && /usr/sbin/chown -R {uid} {dest}",
+        sh_quote(&target)
+    )
+}
+
+fn remove_jobs_as_admin(home: &Path, jobs: &[JobRemoval]) -> Vec<Result<(), String>> {
+    let uid = unsafe { libc::getuid() };
+    let trash = home.join(".Trash");
+    let tasks: Vec<(String, Vec<Vec<String>>)> = jobs
+        .iter()
+        .enumerate()
+        .map(|(i, job)| {
+            let script = job_removal_script(job, &trash_destination(&trash, &job.path), uid);
+            (format!("job{i}"), vec![vec!["/bin/sh".to_string(), "-c".to_string(), script]])
+        })
+        .collect();
+    performance::run_admin_tasks(&tasks)
+        .into_iter()
+        .map(|r| if r.ok { Ok(()) } else { Err(r.error.unwrap_or(r.output)) })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -873,7 +1185,8 @@ pub fn orphans() -> Result<Vec<OrphanGroup>, String> {
 }
 
 pub fn uninstall(req: &UninstallRequest) -> Result<CleanReport, String> {
-    Ok(uninstall_in(&Roots::real()?, req, &trash::move_to_trash))
+    let roots = Roots::real()?;
+    Ok(uninstall_in(&roots, req, &trash::move_to_trash, &|jobs| remove_jobs_as_admin(&roots.home, jobs)))
 }
 
 pub fn list_extensions() -> Result<Vec<ExtensionItem>, String> {
@@ -905,6 +1218,10 @@ mod tests {
 
     fn s(p: &Path) -> String {
         p.to_string_lossy().into_owned()
+    }
+
+    fn no_admin(_: &[JobRemoval]) -> Vec<Result<(), String>> {
+        panic!("unexpected administrator removal")
     }
 
     fn fs_remove(p: &Path) -> Result<(), String> {
@@ -1116,7 +1433,8 @@ mod tests {
         }
         let groups = orphans_in(&r);
         let ids: Vec<&str> = groups.iter().map(|g| g.id.as_str()).collect();
-        assert_eq!(ids, vec!["net.big.thing", "com.gone.app"]);
+        // The team-prefixed cache is named after its id once the team id is stripped.
+        assert_eq!(ids, vec!["net.big.thing", "com.gone.app", "com.x.y"]);
         assert_eq!(groups[1].items.len(), 3);
         assert_eq!(groups[1].total_bytes, groups[1].items.iter().map(|i| i.bytes).sum::<u64>());
         assert!(groups[0].total_bytes > groups[1].total_bytes);
@@ -1155,7 +1473,7 @@ mod tests {
             s(&r.applications.join("Missing.app")),
         ] {
             let req = UninstallRequest { app_path: Some(app.clone()), leftover_paths: vec![], dry_run: false };
-            let rep = uninstall_in(&r, &req, &fs_remove);
+            let rep = uninstall_in(&r, &req, &fs_remove, &no_admin);
             assert_eq!(rep.failed, 1, "should reject {app}");
         }
         let req = UninstallRequest {
@@ -1174,7 +1492,7 @@ mod tests {
             ],
             dry_run: false,
         };
-        let rep = uninstall_in(&r, &req, &fs_remove);
+        let rep = uninstall_in(&r, &req, &fs_remove, &no_admin);
         assert_eq!(rep.failed, 10, "{:?}", rep.outcomes);
         for p in [&sys, &apple, &outside, &deep, &inner, &real] {
             assert!(p.exists());
@@ -1197,14 +1515,14 @@ mod tests {
 
         let req = UninstallRequest { app_path: Some(s(&app)), leftover_paths: leftovers, dry_run: default_true() };
         assert!(req.dry_run);
-        let rep = uninstall_in(&r, &req, &fs_remove);
+        let rep = uninstall_in(&r, &req, &fs_remove, &no_admin);
         assert_eq!(rep.failed, 0, "{:?}", rep.outcomes);
         assert!(rep.dry_run && rep.trashed_bytes >= 29_000);
         assert_eq!(rep.outcomes[0].category.as_deref(), Some("app"));
         assert_eq!(rep.outcomes[1].category.as_deref(), Some("cache"));
         assert!(app.exists());
 
-        let rep = uninstall_in(&r, &UninstallRequest { dry_run: false, ..req }, &fs_remove);
+        let rep = uninstall_in(&r, &UninstallRequest { dry_run: false, ..req }, &fs_remove, &no_admin);
         assert_eq!(rep.failed, 0, "{:?}", rep.outcomes);
         assert!(!app.exists());
         assert!(!lib.join("Caches/com.foo.app").exists());
@@ -1224,12 +1542,12 @@ mod tests {
             leftover_paths: vec![s(&lib.join("Caches/com.foo.app"))],
             dry_run: false,
         };
-        let rep = uninstall_in(&r, &req, &|_| Err("in use".into()));
+        let rep = uninstall_in(&r, &req, &|_| Err("in use".into()), &no_admin);
         assert_eq!(rep.failed, 2);
         assert_eq!(rep.outcomes[1].error.as_deref(), Some("the app was not uninstalled"));
 
         let req = UninstallRequest { app_path: Some(s(&r.home)), ..req };
-        let rep = uninstall_in(&r, &req, &fs_remove);
+        let rep = uninstall_in(&r, &req, &fs_remove, &no_admin);
         assert_eq!(rep.failed, 2);
         assert!(lib.join("Caches/com.foo.app").exists());
     }
@@ -1292,5 +1610,237 @@ mod tests {
         assert!(!is_reverse_dns("com..foo"));
         assert!(bounded_contains("group.com.foo.app", "com.foo.app"));
         assert!(!bounded_contains("com.foo.application", "com.foo.app"));
+    }
+
+    fn write_job(p: &Path, label: &str, program: &Path) {
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        let mut d = plist::Dictionary::new();
+        d.insert("Label".into(), plist::Value::String(label.into()));
+        d.insert("Program".into(), plist::Value::String(program.to_string_lossy().into_owned()));
+        plist::Value::Dictionary(d).to_file_xml(p).unwrap();
+    }
+
+    fn group<'a>(groups: &'a [OrphanGroup], id: &str) -> &'a OrphanGroup {
+        groups.iter().find(|g| g.id == id).unwrap_or_else(|| panic!("no group {id}: {groups:?}"))
+    }
+
+    fn names_in(g: &OrphanGroup) -> Vec<String> {
+        let mut v: Vec<String> = g.items.iter().map(|i| Path::new(&i.path).file_name().unwrap().to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn entry_ids_drop_team_and_group_prefixes() {
+        assert_eq!(entry_id("S8EX82NJP6.com.macpaw.CleanMyMac-setapp"), "com.macpaw.CleanMyMac-setapp");
+        assert_eq!(entry_id("group.com.foo.app"), "com.foo.app");
+        assert_eq!(entry_id("ABCDE12345.com.foo.app.plist"), "com.foo.app");
+        assert_eq!(entry_id("UBF8T346G9.group.com.microsoft.shared"), "com.microsoft.shared");
+        assert_eq!(entry_id("243LU875E5.groups.com.apple.podcasts"), "com.apple.podcasts");
+        // Too short to be an app id once the group prefix is gone.
+        assert_eq!(entry_id("group.com.docker"), "com.docker");
+        assert!(!is_reverse_dns(entry_id("group.tvappservices.container")));
+        // Not a team id (no digit, or nothing after it).
+        assert_eq!(entry_id("HEALTHCARE.com.foo.app"), "HEALTHCARE.com.foo.app");
+        assert_eq!(entry_id("UBF8T346G9.Office"), "UBF8T346G9.Office");
+        assert_eq!(entry_id("com.foo.app.savedState"), "com.foo.app");
+    }
+
+    #[test]
+    fn dead_launchd_jobs_are_leftovers_and_unblock_their_vendor() {
+        let tmp = TempDir::new("apps-jobs");
+        let r = roots(&tmp);
+        let lib = r.user_library();
+        let missing = tmp.path().join("gone/Gone.app/Contents/MacOS/agent");
+        // A privileged helper whose daemon plist was deleted: it would otherwise hide the vendor.
+        touch(&r.library.join("PrivilegedHelperTools/com.gone.app.Agent"), 50);
+        // A daemon with a missing program, and a user agent with a missing program.
+        write_job(&r.library.join("LaunchDaemons/com.gone.app.Updater.plist"), "com.gone.app.Updater", &missing);
+        write_job(&lib.join("LaunchAgents/com.gone.app.Menu.plist"), "com.gone.app.Menu", &missing);
+        // A live helper launched by its daemon plist keeps its vendor installed.
+        let live = r.library.join("PrivilegedHelperTools/com.live.vendor.Helper");
+        touch(&live, 50);
+        write_job(&r.library.join("LaunchDaemons/com.live.vendor.Helper.plist"), "com.live.vendor.Helper", &live);
+        for p in [
+            "HTTPStorages/com.gone.app",
+            "HTTPStorages/com.gone.app.Menu.binarycookies",
+            "Group Containers/ABCDE12345.com.gone.app/x",
+            "Application Scripts/com.gone.app.FinderExt",
+            "Application Scripts/ABCDE12345.com.gone.app",
+            "Caches/com.live.vendor.App/x",
+        ] {
+            touch(&lib.join(p), 10);
+        }
+
+        let groups = orphans_in(&r);
+        assert_eq!(groups.len(), 1, "{groups:?}");
+        let g = group(&groups, "com.gone.app");
+        assert_eq!(
+            names_in(g),
+            vec![
+                "ABCDE12345.com.gone.app",
+                "ABCDE12345.com.gone.app",
+                "com.gone.app",
+                "com.gone.app.Agent",
+                "com.gone.app.FinderExt",
+                "com.gone.app.Menu.binarycookies",
+                "com.gone.app.Menu.plist",
+                "com.gone.app.Updater.plist",
+            ]
+        );
+        let admin: Vec<&str> = g.items.iter().filter(|i| i.requires_admin).map(|i| i.kind.as_str()).collect();
+        assert_eq!(admin.len(), 2);
+        assert!(admin.contains(&"privileged_helper") && admin.contains(&"launch_daemon"));
+        let menu = g.items.iter().find(|i| i.path.ends_with("com.gone.app.Menu.plist")).unwrap();
+        assert!(!menu.requires_admin && menu.kind == LeftoverKind::LaunchAgent);
+    }
+
+    #[test]
+    fn shared_groups_shortcuts_and_system_extensions_are_not_orphans() {
+        let tmp = TempDir::new("apps-shared");
+        let r = roots(&tmp);
+        let lib = r.user_library();
+        // A driver extension outlives the app that installed it and keeps its vendor installed.
+        fs::create_dir_all(r.library.join("SystemExtensions/0B0E3BBE/com.drv.maker.dext")).unwrap();
+        for p in [
+            "Group Containers/group.com.docker/x",
+            "Application Scripts/group.tvappservices.container",
+            "Application Scripts/group.is.workflow.my.app",
+            "Group Containers/243LU875E5.groups.com.apple.podcasts/x",
+            "Application Scripts/com.drv.maker",
+            "Group Containers/ABCDE12345.com.drv.maker.shared/x",
+            "Application Scripts/com.gone.app",
+        ] {
+            touch(&lib.join(p), 10);
+        }
+        let ids: Vec<String> = orphans_in(&r).into_iter().map(|g| g.id).collect();
+        assert_eq!(ids, vec!["com.gone.app"]);
+    }
+
+    #[test]
+    fn app_groups_of_installed_apps_are_kept() {
+        let tmp = TempDir::new("apps-groups");
+        let r = roots(&tmp);
+        let lib = r.user_library();
+        let exe = crate::codesign::tests::entitled_to(&["group.com.facebook.family", "ABCDE12345.com.chat.shared"]);
+        make_app(&r.applications, "Chat", &[("CFBundleIdentifier", "net.chat.app")], false, &exe);
+        for p in [
+            "Group Containers/group.com.facebook.family/x",
+            "Application Scripts/group.com.facebook.family",
+            "Group Containers/ABCDE12345.com.chat.shared/x",
+            "Group Containers/group.com.gone.family/x",
+        ] {
+            touch(&lib.join(p), 10);
+        }
+        let ids: Vec<String> = orphans_in(&r).into_iter().map(|g| g.id).collect();
+        assert_eq!(ids, vec!["com.gone.family"]);
+
+        // Uninstalling another app never takes a group the entitled app still uses.
+        let fb = make_app(&r.applications, "Facebook", &[("CFBundleIdentifier", "com.facebook.family")], false, b"");
+        let items = leftovers_in(&r, &fb).unwrap().items;
+        assert!(items.iter().all(|i| !i.path.contains("group.com.facebook.family")), "{items:?}");
+        // The entitled app's own uninstallation does take it.
+        fs::remove_dir_all(&fb).unwrap();
+        let exe = crate::codesign::tests::entitled_to(&["group.net.chat.app"]);
+        let chat2 = make_app(&r.applications, "Chat2", &[("CFBundleIdentifier", "net.chat.app2")], false, &exe);
+        touch(&lib.join("Group Containers/group.net.chat.app2/x"), 10);
+        let items = leftovers_in(&r, &chat2).unwrap().items;
+        assert!(items.iter().any(|i| i.path.ends_with("group.net.chat.app2")), "{items:?}");
+    }
+
+    #[test]
+    fn folders_named_after_an_orphaned_app_join_its_group() {
+        let tmp = TempDir::new("apps-named");
+        let r = roots(&tmp);
+        let lib = r.user_library();
+        make_app(&r.applications, "Keeper", &[("CFBundleIdentifier", "com.other.keeper")], false, b"");
+        for p in [
+            "HTTPStorages/com.vendor.GoneApp-setapp",
+            "Containers/com.vendor.keepers/x",
+            "Containers/com.tiny.gizmo/x",
+            "Application Support/GoneApp_5_Setapp/x",
+            "Application Support/GoneApp X/x",
+            "Caches/goneapp/x",
+            "Logs/GoneApps/x",
+            "Application Support/Keeper Data/x",
+            "Application Support/Gizmo/x",
+        ] {
+            touch(&lib.join(p), 10);
+        }
+        let groups = orphans_in(&r);
+        assert_eq!(
+            names_in(group(&groups, "com.vendor.GoneApp-setapp")),
+            vec!["GoneApp X", "GoneApp_5_Setapp", "com.vendor.GoneApp-setapp", "goneapp"]
+        );
+        // `keepers` is also the name of an installed app; `gizmo` is too short to match by name.
+        assert_eq!(names_in(group(&groups, "com.vendor.keepers")), vec!["com.vendor.keepers"]);
+        assert_eq!(names_in(group(&groups, "com.tiny.gizmo")), vec!["com.tiny.gizmo"]);
+    }
+
+    #[test]
+    fn orphaned_system_jobs_are_removed_with_one_admin_call() {
+        let tmp = TempDir::new("apps-admin");
+        let r = roots(&tmp);
+        let lib = r.user_library();
+        let helper = r.library.join("PrivilegedHelperTools/com.gone.app.Agent");
+        touch(&helper, 50);
+        let live = r.library.join("PrivilegedHelperTools/com.live.vendor.Helper");
+        touch(&live, 50);
+        write_job(&r.library.join("LaunchDaemons/com.live.vendor.Helper.plist"), "com.live.vendor.Helper", &live);
+        let cache = lib.join("Caches/com.gone.app");
+        touch(&cache.join("x"), 10);
+        let req = UninstallRequest {
+            app_path: None,
+            leftover_paths: vec![s(&helper), s(&live), s(&cache)],
+            dry_run: true,
+        };
+
+        // Dry run: nothing runs, but the helper validates and the live one does not.
+        let rep = uninstall_in(&r, &req, &fs_remove, &no_admin);
+        let ok: Vec<bool> = rep.outcomes.iter().map(|o| o.ok).collect();
+        assert_eq!(ok, vec![true, false, true]);
+        assert_eq!(rep.outcomes[0].category.as_deref(), Some("privileged_helper"));
+
+        let calls = std::cell::RefCell::new(Vec::new());
+        let admin = |jobs: &[JobRemoval]| {
+            calls.borrow_mut().push(jobs.iter().map(|j| (j.label.clone(), j.domain)).collect::<Vec<_>>());
+            vec![Err("Cancelled".to_string())]
+        };
+        let rep = uninstall_in(&r, &UninstallRequest { dry_run: false, ..req.clone() }, &fs_remove, &admin);
+        assert_eq!(*calls.borrow(), vec![vec![("com.gone.app.Agent".to_string(), JobDomain::System)]]);
+        assert_eq!(rep.outcomes[0].error.as_deref(), Some("Cancelled"));
+        assert!(!rep.outcomes[1].ok && rep.outcomes[2].ok);
+        assert!(helper.exists() && live.exists() && !cache.exists());
+
+        // Never as part of an app's uninstallation.
+        let app = make_app(&r.applications, "Other", &[("CFBundleIdentifier", "com.other.app")], false, b"");
+        let rep = uninstall_in(
+            &r,
+            &UninstallRequest { app_path: Some(s(&app)), leftover_paths: vec![s(&helper)], dry_run: true },
+            &fs_remove,
+            &no_admin,
+        );
+        assert!(rep.outcomes[0].ok && !rep.outcomes[1].ok);
+    }
+
+    #[test]
+    fn job_removal_boots_out_and_moves_to_trash() {
+        let job = JobRemoval { label: "com.gone.app.Agent".into(), path: "/Library/PrivilegedHelperTools/com.gone.app.Agent".into(), domain: JobDomain::System };
+        let script = job_removal_script(&job, Path::new("/Users/me/.Trash/com.gone.app.Agent"), 501);
+        assert_eq!(
+            script,
+            "/bin/launchctl bootout system/com.gone.app.Agent 2>/dev/null; \
+             /bin/mv -n /Library/PrivilegedHelperTools/com.gone.app.Agent /Users/me/.Trash/com.gone.app.Agent \
+             && [ ! -e /Library/PrivilegedHelperTools/com.gone.app.Agent ] && /usr/sbin/chown -R 501 /Users/me/.Trash/com.gone.app.Agent"
+        );
+        let agent = JobRemoval { label: "a b".into(), path: "/Library/LaunchAgents/a b.plist".into(), domain: JobDomain::User };
+        let script = job_removal_script(&agent, Path::new("/t/a b.plist"), 501);
+        assert!(script.starts_with("/bin/launchctl bootout 'gui/501/a b' 2>/dev/null; /bin/mv -n '/Library/LaunchAgents/a b.plist' '/t/a b.plist'"));
+
+        let tmp = TempDir::new("apps-trash-dest");
+        assert_eq!(trash_destination(tmp.path(), Path::new("/x/new")), tmp.path().join("new"));
+        touch(&tmp.path().join("taken"), 1);
+        let dest = trash_destination(tmp.path(), Path::new("/x/taken"));
+        assert!(dest.file_name().unwrap().to_string_lossy().starts_with("taken "));
     }
 }

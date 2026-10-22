@@ -40,6 +40,12 @@ pub struct LaunchItem {
     /// Containing app inferred from `program`.
     pub app_name: Option<String>,
     pub removable: bool,
+    /// Its program, or the app that registered it, no longer exists.
+    #[serde(default)]
+    pub orphaned: bool,
+    /// App that registered the job through `SMAppService` (such jobs have no plist file).
+    #[serde(default)]
+    pub parent_bundle_id: Option<String>,
 }
 
 /// Plist directories; injectable for tests.
@@ -152,15 +158,15 @@ pub fn app_name_for(program: &str) -> Option<String> {
     })
 }
 
-struct PlistInfo {
-    label: String,
-    program: Option<String>,
+pub(crate) struct PlistInfo {
+    pub(crate) label: String,
+    pub(crate) program: Option<String>,
     run_at_load: bool,
     keep_alive: bool,
     disabled_key: bool,
 }
 
-fn read_plist(path: &Path) -> Option<PlistInfo> {
+pub(crate) fn read_plist(path: &Path) -> Option<PlistInfo> {
     let value = plist::Value::from_file(path).ok()?;
     let dict = value.as_dictionary()?;
     let label = dict.get("Label")?.as_string()?.to_string();
@@ -178,6 +184,14 @@ fn read_plist(path: &Path) -> Option<PlistInfo> {
         _ => false,
     };
     Some(PlistInfo { label, program, run_at_load: flag("RunAtLoad"), keep_alive, disabled_key: flag("Disabled") })
+}
+
+/// Absolute program path that no longer exists (paths on other volumes count as present).
+pub(crate) fn missing_program(program: &str) -> bool {
+    let path = Path::new(program);
+    path.is_absolute()
+        && !path.starts_with("/Volumes")
+        && fs::symlink_metadata(path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
 }
 
 fn plist_files(dir: &Path) -> Vec<PathBuf> {
@@ -203,7 +217,6 @@ fn build_item(path: &Path, scope: LaunchScope, state: &LaunchState) -> Option<La
     Some(LaunchItem {
         app_name: info.program.as_deref().and_then(app_name_for),
         plist_path: path.to_string_lossy().into_owned(),
-        program: info.program,
         scope,
         run_at_load: info.run_at_load,
         keep_alive: info.keep_alive,
@@ -211,6 +224,9 @@ fn build_item(path: &Path, scope: LaunchScope, state: &LaunchState) -> Option<La
         loaded: pid_entry.is_some(),
         pid: pid_entry.copied().flatten(),
         removable: scope == LaunchScope::UserAgent,
+        orphaned: info.program.as_deref().is_some_and(missing_program),
+        parent_bundle_id: None,
+        program: info.program,
         label: info.label,
     })
 }
@@ -230,8 +246,94 @@ pub fn collect_launch_items(roots: &LaunchRoots, state: &LaunchState) -> Vec<Lau
     items
 }
 
+/// Properties of a job as printed by `launchctl print <domain>/<label>`.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PrintedJob {
+    /// Registered by an app through `SMAppService` instead of a plist file.
+    pub submitted: bool,
+    pub parent_bundle_id: Option<String>,
+    pub program: Option<String>,
+    pub pid: Option<i32>,
+}
+
+pub fn parse_print_job(out: &str) -> PrintedJob {
+    let mut job = PrintedJob::default();
+    for line in out.lines() {
+        // Only the job's own properties (one tab deep), not those of nested sections.
+        let Some(rest) = line.strip_prefix('\t').filter(|r| !r.starts_with('\t')) else { continue };
+        let Some((key, value)) = rest.split_once(" = ") else { continue };
+        let value = value.trim();
+        match key {
+            "path" => job.submitted = value.starts_with("(submitted by"),
+            "parent bundle identifier" => job.parent_bundle_id = Some(value.to_string()),
+            "program" => job.program = Some(value.to_string()),
+            "pid" => job.pid = value.parse().ok(),
+            _ => {}
+        }
+    }
+    job
+}
+
+/// Loaded user jobs registered by apps that no longer exist (e.g. login items of a deleted app,
+/// which keep running until logout). `known`: labels that have a plist file.
+pub fn collect_submitted_orphans(
+    state: &LaunchState,
+    known: &HashSet<&str>,
+    print: impl Fn(&str) -> Option<String>,
+    app_exists: impl Fn(&str) -> bool,
+) -> Vec<LaunchItem> {
+    let mut labels: Vec<&String> = state
+        .user_loaded
+        .keys()
+        .filter(|l| !l.starts_with("com.apple.") && !l.starts_with("application.") && !known.contains(l.as_str()))
+        .collect();
+    labels.sort();
+    labels
+        .into_iter()
+        .filter_map(|label| {
+            let job = parse_print_job(&print(label)?);
+            let parent = job.parent_bundle_id.filter(|id| job.submitted && !app_exists(id))?;
+            Some(LaunchItem {
+                label: label.clone(),
+                plist_path: String::new(),
+                program: job.program,
+                scope: LaunchScope::UserAgent,
+                run_at_load: false,
+                keep_alive: false,
+                enabled: true,
+                loaded: true,
+                pid: job.pid.or(state.user_loaded.get(label).copied().flatten()),
+                app_name: None,
+                removable: false,
+                orphaned: true,
+                parent_bundle_id: Some(parent),
+            })
+        })
+        .collect()
+}
+
 pub fn launch_items() -> Vec<LaunchItem> {
-    collect_launch_items(&LaunchRoots::system(), &query_state())
+    let state = query_state();
+    let mut items = collect_launch_items(&LaunchRoots::system(), &state);
+    let known: HashSet<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    let installed = crate::apps::installed_app_ids();
+    let orphans = collect_submitted_orphans(
+        &state,
+        &known,
+        |label| launchctl(&["print", &format!("{}/{label}", gui_domain())]).ok(),
+        |id| installed.contains(&id.to_lowercase()) || crate::launchservices::app_exists(id),
+    );
+    items.extend(orphans);
+    items
+}
+
+/// Stops a job registered by an app that no longer exists (it has no plist file to remove).
+pub fn stop_orphaned(label: &str) -> Result<bool, String> {
+    let orphan = launch_items().into_iter().any(|i| i.label == label && i.orphaned && i.plist_path.is_empty());
+    if !orphan {
+        return Err(format!("{label} is not a job of a deleted app"));
+    }
+    launchctl(&["bootout", &format!("{}/{label}", gui_domain())]).map(|_| true)
 }
 
 /// Plist in `~/Library/LaunchAgents` whose `Label` matches.
@@ -547,7 +649,7 @@ fn run_user_task(id: &str, cmds: &[Vec<String>]) -> TaskResult {
 }
 
 /// Runs the admin tasks in a single `osascript` invocation (a single dialog).
-fn run_admin_tasks(tasks: &[(String, Vec<Vec<String>>)]) -> Vec<TaskResult> {
+pub(crate) fn run_admin_tasks(tasks: &[(String, Vec<Vec<String>>)]) -> Vec<TaskResult> {
     let ids: Vec<String> = tasks.iter().map(|(id, _)| id.clone()).collect();
     let out = match Command::new("/usr/bin/osascript").arg("-e").arg(admin_applescript(tasks)).output() {
         Ok(o) => o,
@@ -774,6 +876,77 @@ mod tests {
             fs::create_dir_all(d).unwrap();
         }
         r
+    }
+
+    #[test]
+    fn items_with_a_missing_program_are_orphaned() {
+        let tmp = TempDir::new("launch-orphaned");
+        let r = roots(&tmp);
+        let user = r.user_agents.clone().unwrap();
+        let exe = tmp.path().join("tool");
+        fs::write(&exe, b"x").unwrap();
+        write_plist(&user, "com.live.plist", &format!("<key>Label</key><string>com.live</string><key>Program</key><string>{}</string>", exe.display()));
+        write_plist(&user, "com.gone.plist", "<key>Label</key><string>com.gone</string><key>Program</key><string>/nonexistent/Gone.app/Contents/MacOS/gone</string>");
+        write_plist(&user, "com.ext.plist", "<key>Label</key><string>com.ext</string><key>Program</key><string>/Volumes/Off/tool</string>");
+        let items = collect_launch_items(&r, &LaunchState::default());
+        let orphaned: Vec<(&str, bool)> = items.iter().map(|i| (i.label.as_str(), i.orphaned)).collect();
+        assert_eq!(orphaned, vec![("com.ext", false), ("com.gone", true), ("com.live", false)]);
+    }
+
+    const SUBMITTED: &str = "gui/501/com.gone.app.Menu = {
+\tactive count = 1
+\tpath = (submitted by smd.108)
+\tstate = running
+\tprogram identifier = com.gone.app.Menu (mode: 1)
+\tparent bundle identifier = com.gone.app
+\tpid = 620
+\tendpoints = {
+\t\tpath = /should/be/ignored
+\t}
+}
+";
+
+    #[test]
+    fn parses_printed_jobs() {
+        let job = parse_print_job(SUBMITTED);
+        assert_eq!(
+            job,
+            PrintedJob { submitted: true, parent_bundle_id: Some("com.gone.app".into()), program: None, pid: Some(620) }
+        );
+        let plain = parse_print_job("x = {\n\tpath = /System/Library/LaunchAgents/a.plist\n\tprogram = /usr/bin/a\n}\n");
+        assert!(!plain.submitted && plain.program.as_deref() == Some("/usr/bin/a") && plain.pid.is_none());
+    }
+
+    #[test]
+    fn finds_running_jobs_of_deleted_apps() {
+        let mut state = LaunchState::default();
+        for (label, pid) in [
+            ("com.gone.app.Menu", Some(620)),
+            ("com.live.app.Helper", None),
+            ("com.plain.job", None),
+            ("com.known.agent", Some(1)),
+            ("com.apple.thing", None),
+            ("application.com.gone.app.123", Some(9)),
+        ] {
+            state.user_loaded.insert(label.to_string(), pid);
+        }
+        let known: HashSet<&str> = ["com.known.agent"].into();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let print = |label: &str| {
+            asked.borrow_mut().push(label.to_string());
+            Some(match label {
+                "com.gone.app.Menu" => SUBMITTED.to_string(),
+                "com.live.app.Helper" => SUBMITTED.replace("com.gone.app", "com.live.app"),
+                _ => "x = {\n\tpath = /Library/LaunchAgents/x.plist\n}\n".to_string(),
+            })
+        };
+        let items = collect_submitted_orphans(&state, &known, print, |id| id == "com.live.app");
+        assert_eq!(*asked.borrow(), vec!["com.gone.app.Menu", "com.live.app.Helper", "com.plain.job"]);
+        assert_eq!(items.len(), 1);
+        let item = &items[0];
+        assert_eq!(item.label, "com.gone.app.Menu");
+        assert!(item.orphaned && item.loaded && !item.removable && item.plist_path.is_empty());
+        assert_eq!((item.pid, item.parent_bundle_id.as_deref()), (Some(620), Some("com.gone.app")));
     }
 
     #[test]

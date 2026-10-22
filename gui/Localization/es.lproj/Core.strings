@@ -123,3 +123,4 @@
 "Quit {source} before cleaning" = "Cierra {source} antes de limpiar";
 "monitor executable not found: {path}" = "no existe el ejecutable del monitor: {path}";
 "serialization: {error}" = "serialización: {error}";
+"{label} is not a job of a deleted app" = "{label} no es un proceso de una app eliminada";

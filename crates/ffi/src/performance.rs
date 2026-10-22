@@ -23,6 +23,13 @@ pub unsafe extern "C" fn mcl_launch_item_remove(plist_path: *const c_char, dry_r
     respond(move || performance::remove_launch_item(&raw?, dry_run != 0))
 }
 
+/// Stops a running job of a deleted app (`orphaned` item without a plist).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mcl_launch_item_stop(label: *const c_char) -> *mut c_char {
+    let raw = unsafe { arg(label) };
+    respond(move || performance::stop_orphaned(&raw?))
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn mcl_maintenance_tasks() -> *mut c_char {
     respond(|| Ok(performance::maintenance_tasks()))
@@ -93,6 +100,14 @@ mod tests {
         assert!(v["data"].is_array());
         let v = take(unsafe { mcl_launch_item_set_enabled(std::ptr::null(), 1) });
         assert_eq!(v["ok"], false);
+    }
+
+    #[test]
+    fn stop_only_accepts_jobs_of_deleted_apps() {
+        let label = CString::new("com.apple.Finder").unwrap();
+        let v = take(unsafe { mcl_launch_item_stop(label.as_ptr()) });
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].as_str().unwrap().contains("not a job of a deleted app"));
     }
 
     #[test]
