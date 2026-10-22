@@ -343,3 +343,7 @@
 "app deleted" = "app eliminada";
 "Stop" = "Detener";
 "It keeps running until you log out because its app was deleted." = "Sigue en marcha hasta que cierres sesión porque su app se eliminó.";
+
+/* Failures of the last cleanup */
+"Show what couldn't be cleaned" = "Ver qué no se pudo limpiar";
+"Couldn't clean" = "No se pudo limpiar";

@@ -459,6 +459,60 @@ struct ActionBar<Leading: View, Trailing: View>: View {
     }
 }
 
+/// "Last clean" line of an action bar. When something failed, its count opens the list of
+/// what couldn't be cleaned and why.
+struct LastCleanSummary: View {
+    let report: CleanReport
+    let cleanedBytes: UInt64
+    private let showingFailures = State(initialValue: false)
+
+    var body: some View {
+        HStack(spacing: Space.xs) {
+            Text(loc("Last clean: \(formatBytes(cleanedBytes))"))
+            if report.failed > 0 {
+                Text("·")
+                Button { showingFailures.wrappedValue = true } label: {
+                    Label(countFailures(report.failed), systemImage: "exclamationmark.triangle.fill").underline()
+                }
+                .buttonStyle(.plain)
+                .clickablePointer()
+                .help(loc("Show what couldn't be cleaned"))
+                .popover(isPresented: showingFailures.projectedValue, arrowEdge: .top) {
+                    FailureList(outcomes: report.outcomes.filter { !$0.ok })
+                }
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(report.failed > 0 ? .orange : .secondary)
+    }
+}
+
+/// Items a cleanup couldn't remove, each with the reason.
+struct FailureList: View {
+    let outcomes: [CleanOutcome]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.m) {
+            Text(loc("Couldn't clean")).font(.headline)
+            ScrollView {
+                VStack(alignment: .leading, spacing: Space.m) {
+                    ForEach(outcomes) { outcome in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(abbreviatingHome(outcome.path)).font(.callout).lineLimit(2).truncationMode(.middle)
+                            Text(locCore(outcome.error ?? loc("Unknown error"))).font(.caption).foregroundStyle(.secondary)
+                        }
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .frame(maxHeight: 280)
+        }
+        .padding(Space.l)
+        .frame(width: 400)
+    }
+}
+
 struct StatTile: View {
     let symbol: String
     let theme: ModuleTheme

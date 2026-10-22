@@ -136,10 +136,20 @@ fn matching_rule(dir: &Path, name: &str, files: &HashSet<OsString>) -> Option<&'
     })
 }
 
+/// The current user can create and remove entries in `dir`: moving an artifact to the Trash
+/// renames it out of its parent. Go's module cache, for instance, is read-only on purpose.
+fn writable(dir: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(dir.as_os_str().as_bytes()).is_ok_and(|c| unsafe { libc::access(c.as_ptr(), libc::W_OK) } == 0)
+}
+
 struct ProjectWalker {
     found: Vec<(PathBuf, Vec<(PathBuf, &'static ArtifactRule)>)>,
     scanned: u64,
     include_protected: bool,
+    /// Tool caches (`~/go/pkg/mod`...): the projects inside are downloaded dependencies,
+    /// cleaned as a whole from the tools list.
+    skip: HashSet<PathBuf>,
 }
 
 impl ProjectWalker {
@@ -172,13 +182,15 @@ impl ProjectWalker {
                 artifacts.push((dir.join(&name), rule));
             } else if !s.starts_with('.')
                 && !s.ends_with(".app")
+                && !self.skip.contains(&dir.join(&name))
                 && !(depth == 0 && SKIP_TOP.contains(&s))
                 && !(depth == 0 && !self.include_protected && access::PROTECTED_HOME_DIRS.contains(&s))
             {
                 descend.push(name);
             }
         }
-        if !artifacts.is_empty() {
+        // Artifacts that can't be moved out of a read-only folder are not offered.
+        if !artifacts.is_empty() && writable(dir) {
             self.found.push((dir.to_path_buf(), artifacts));
         }
         for name in descend {
@@ -209,7 +221,8 @@ fn last_activity(dir: &Path) -> u64 {
 pub fn scan_projects_in(home: &Path, req: &ProjectsRequest) -> ProjectsReport {
     let started = Instant::now();
     let include_protected = req.include_protected || access::full_disk_access();
-    let mut walker = ProjectWalker { found: Vec::new(), scanned: 0, include_protected };
+    let skip = CACHES.iter().flat_map(|c| c.paths).map(|p| home.join(p)).collect();
+    let mut walker = ProjectWalker { found: Vec::new(), scanned: 0, include_protected, skip };
     match &req.roots {
         Some(roots) => {
             for r in roots {
@@ -274,6 +287,9 @@ fn validate_artifact(home: &Path, path: &Path) -> Result<(), String> {
     };
     if !parent.starts_with(home) || parent == home {
         return Err("outside the home folder".into());
+    }
+    if !writable(parent) {
+        return Err("its folder is read-only".into());
     }
     let files: HashSet<OsString> = fs::read_dir(parent)
         .map_err(|e| e.to_string())?
@@ -743,6 +759,7 @@ pub fn clean(req: &DevCleanRequest) -> Result<CleanReport, String> {
 mod tests {
     use super::*;
     use crate::testutil::TempDir;
+    use std::os::unix::fs::PermissionsExt;
 
     fn touch(p: &Path) {
         fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -775,6 +792,14 @@ mod tests {
         fill(&h.join("Projects/py2/.venv"));
         touch(&h.join("Projects/py2/.venv/pyvenv.cfg"));
         touch(&h.join("Projects/py2/requirements.txt"));
+        // Dependencies downloaded into a tool cache, and a read-only folder (Go's module cache
+        // is read-only): neither is offered.
+        touch(&h.join("go/pkg/mod/github.com/x/y@v1/plugin/build.gradle"));
+        fill(&h.join("go/pkg/mod/github.com/x/y@v1/plugin/build"));
+        touch(&h.join("Projects/locked/Cargo.toml"));
+        fill(&h.join("Projects/locked/target"));
+        let locked = h.join("Projects/locked");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
         // Library is not walked; Desktop only if requested.
         touch(&h.join("Library/x/package.json"));
         fill(&h.join("Library/x/node_modules"));
@@ -791,6 +816,9 @@ mod tests {
             .collect();
         found.sort();
         assert_eq!(found, ["/Projects/cli/target", "/Projects/py2/.venv", "/Projects/web/.next", "/Projects/web/node_modules"]);
+        let rep = clean_in(h, &DevCleanRequest { paths: vec![locked.join("target").to_string_lossy().into_owned()], dry_run: true });
+        assert_eq!(rep.outcomes[0].error.as_deref(), Some("its folder is read-only"));
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
         let with_protected = scan_projects_in(h, &ProjectsRequest { include_protected: true, ..Default::default() });
         assert!(with_protected.projects.iter().any(|p| p.name == "demo"));
         let web = r.projects.iter().find(|p| p.name == "web").unwrap();

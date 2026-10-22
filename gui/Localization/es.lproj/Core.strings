@@ -124,3 +124,4 @@
 "monitor executable not found: {path}" = "no existe el ejecutable del monitor: {path}";
 "serialization: {error}" = "serialización: {error}";
 "{label} is not a job of a deleted app" = "{label} no es un proceso de una app eliminada";
+"its folder is read-only" = "su carpeta es de solo lectura";

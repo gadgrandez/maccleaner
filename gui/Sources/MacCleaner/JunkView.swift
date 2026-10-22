@@ -165,8 +165,7 @@ struct JunkView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(loc("\(formatBytes(store.selectedBytes)) selected")).font(.headline).monospacedDigit()
                             if let last = store.lastClean {
-                                Text(loc("Last clean: \(formatBytes(last.trashedBytes + last.deletedBytes))") + (last.failed > 0 ? " · " + countFailures(last.failed) : ""))
-                                    .font(.caption).foregroundStyle(last.failed > 0 ? .orange : .secondary)
+                                LastCleanSummary(report: last, cleanedBytes: last.trashedBytes + last.deletedBytes)
                             }
                         }
                     } trailing: {
