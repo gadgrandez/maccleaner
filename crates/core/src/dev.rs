@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clean::{CleanOutcome, CleanReport};
 use crate::rules::home_dir;
-use crate::{fsutil, governor, trash};
+use crate::{fsutil, governor, progress, trash};
 
 // MARK: Project artifacts
 
@@ -657,9 +657,10 @@ pub struct CommandResult {
 
 /// Runs command-based cleanups. Known ids only; arguments are fixed.
 pub fn run_commands(ids: &[String]) -> Vec<CommandResult> {
+    let _progress = progress::start(ids.len(), false);
     ids.iter()
         .map(|id| {
-            let result = match id.as_str() {
+            let result = progress::step(Path::new(id), 0, || match id.as_str() {
                 "homebrew_cleanup" => first_existing(BREW_PATHS)
                     .ok_or_else(|| "Homebrew is not installed".to_string())
                     .and_then(|brew| run(&brew, &["cleanup"], COMMAND_TIMEOUT)),
@@ -669,7 +670,7 @@ pub fn run_commands(ids: &[String]) -> Vec<CommandResult> {
                     Ok((ok1 && ok2, format!("{out1}\n{out2}")))
                 }),
                 _ => Err("unknown task".to_string()),
-            };
+            });
             match result {
                 Ok((ok, output)) => CommandResult {
                     id: id.clone(),
@@ -722,6 +723,7 @@ pub fn clean_in(home: &Path, req: &DevCleanRequest) -> CleanReport {
         .collect();
 
     let valid: Vec<PathBuf> = checked.iter().filter_map(|(_, c)| c.as_ref().ok().map(|(p, _)| p.clone())).collect();
+    let _progress = progress::start(valid.len(), req.dry_run);
     let mut sizes = fsutil::usages(&valid).into_iter();
     let mut report = CleanReport { dry_run: req.dry_run, trashed_bytes: 0, deleted_bytes: 0, failed: 0, outcomes: Vec::new() };
     for (raw, check) in checked {
@@ -729,7 +731,7 @@ pub fn clean_in(home: &Path, req: &DevCleanRequest) -> CleanReport {
             Err(error) => CleanOutcome { path: raw, category: None, action: None, bytes: 0, ok: false, error: Some(error) },
             Ok((path, category)) => {
                 let bytes = sizes.next().map(|u| u.bytes).unwrap_or(0);
-                let result = if req.dry_run { Ok(()) } else { trash::move_to_trash(&path) };
+                let result = if req.dry_run { Ok(()) } else { progress::step(&path, bytes, || trash::move_to_trash(&path)) };
                 if result.is_ok() {
                     report.trashed_bytes += bytes;
                 }

@@ -226,7 +226,9 @@ struct UninstallerView: View {
                     }
                 }
                 HStack {
-                    if store.selectedAppIsRunning {
+                    if store.uninstalling {
+                        CleanProgressView(title: loc("Uninstalling…"))
+                    } else if store.selectedAppIsRunning {
                         Label(loc("The app is open: quit it before uninstalling."), systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange).font(.callout)
                     }
@@ -288,7 +290,11 @@ struct LeftoversView: View {
                         .padding(.horizontal, 24).padding(.bottom, 96)
                     }
                     ActionBar {
-                        Text(loc("\(formatBytes(store.orphanSelectedBytes)) selected")).font(.headline).monospacedDigit()
+                        if store.cleaningOrphans {
+                            CleanProgressView(title: loc("Removing…"))
+                        } else {
+                            Text(loc("\(formatBytes(store.orphanSelectedBytes)) selected")).font(.headline).monospacedDigit()
+                        }
                     } trailing: {
                         Button { Task { await store.cleanOrphans() } } label: {
                             Label(store.cleaningOrphans ? loc("Removing…") : loc("Remove leftovers"), systemImage: "trash")
@@ -369,7 +375,11 @@ struct ExtensionsView: View {
                     }
                     if !store.selection.isEmpty {
                         ActionBar {
-                            Text(locCount(store.selection.count, one: { loc("\($0) extension selected") }, other: { loc("\($0) extensions selected") })).font(.headline)
+                            if store.removing {
+                                CleanProgressView(title: loc("Removing…"))
+                            } else {
+                                Text(locCount(store.selection.count, one: { loc("\($0) extension selected") }, other: { loc("\($0) extensions selected") })).font(.headline)
+                            }
                         } trailing: {
                             Button { Task { await store.remove() } } label: { Label(loc("Remove"), systemImage: "trash") }
                                 .primaryActionStyle().controlSize(.large).disabled(store.removing)

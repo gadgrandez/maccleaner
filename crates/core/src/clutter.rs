@@ -25,7 +25,7 @@ use twox_hash::XxHash3_128;
 use crate::clean::{CleanOutcome, CleanReport, CleanRequest};
 use crate::fsutil::{self, Detail, FileMeta, Visitor};
 use crate::rules::{self, Action};
-use crate::trash;
+use crate::{progress, trash};
 
 const DAY: u64 = 86_400;
 const LARGE_MIN: u64 = 50_000_000;
@@ -743,6 +743,7 @@ pub fn trash_paths_in(home: &Path, req: &CleanRequest) -> CleanReport {
     let validated: Vec<Result<PathBuf, String>> =
         req.paths.iter().map(|p| validate_user_path(home.as_deref(), p)).collect();
     let valid: Vec<PathBuf> = validated.iter().filter_map(|v| v.as_ref().ok().cloned()).collect();
+    let _progress = progress::start(valid.len(), req.dry_run);
     let mut sizes = fsutil::usages(&valid).into_iter().map(|u| u.bytes);
 
     let mut report = CleanReport { dry_run: req.dry_run, trashed_bytes: 0, deleted_bytes: 0, failed: 0, outcomes: Vec::new() };
@@ -751,7 +752,7 @@ pub fn trash_paths_in(home: &Path, req: &CleanRequest) -> CleanReport {
             Err(error) => CleanOutcome { path: raw.clone(), category: None, action: None, bytes: 0, ok: false, error: Some(error) },
             Ok(path) => {
                 let bytes = sizes.next().unwrap_or(0);
-                let result = if req.dry_run { Ok(()) } else { trash::move_to_trash(&path) };
+                let result = if req.dry_run { Ok(()) } else { progress::step(&path, bytes, || trash::move_to_trash(&path)) };
                 if result.is_ok() {
                     report.trashed_bytes += bytes;
                 }

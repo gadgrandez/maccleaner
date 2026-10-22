@@ -336,7 +336,11 @@ struct LargeFilesView: View {
                     }
                     .padding(.horizontal, 24)
                     ActionBar {
-                        Text(loc("\(countFiles(store.selection.count)) · \(formatBytes(store.selectedBytes))")).font(.headline).monospacedDigit()
+                        if store.trashing {
+                            CleanProgressView(title: loc("Moving to the Trash…"))
+                        } else {
+                            Text(loc("\(countFiles(store.selection.count)) · \(formatBytes(store.selectedBytes))")).font(.headline).monospacedDigit()
+                        }
                     } trailing: {
                         Button { store.confirming = true } label: { Label(loc("Move to Trash"), systemImage: "trash") }
                             .primaryActionStyle().controlSize(.large)
@@ -469,7 +473,11 @@ struct DuplicatesView: View {
                         .padding(.horizontal, 24).padding(.bottom, 96)
                     }
                     ActionBar {
-                        Text(loc("\(countCopies(store.selection.count)) · \(formatBytes(store.selectedBytes))")).font(.headline).monospacedDigit()
+                        if store.trashing {
+                            CleanProgressView(title: loc("Moving to the Trash…"))
+                        } else {
+                            Text(loc("\(countCopies(store.selection.count)) · \(formatBytes(store.selectedBytes))")).font(.headline).monospacedDigit()
+                        }
                     } trailing: {
                         Button { store.confirming = true } label: { Label(loc("Move to Trash"), systemImage: "trash") }
                             .primaryActionStyle().controlSize(.large)

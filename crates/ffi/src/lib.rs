@@ -11,7 +11,7 @@ use std::ffi::{CStr, CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 
-use maccleaner_core::{clean, governor, launchd, rules, scan, space, state, system};
+use maccleaner_core::{clean, governor, launchd, progress, rules, scan, space, state, system};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -80,6 +80,12 @@ pub unsafe extern "C" fn mcl_space(path: *const c_char, top: u32) -> *mut c_char
 #[unsafe(no_mangle)]
 pub extern "C" fn mcl_access_status() -> *mut c_char {
     respond(|| Ok(maccleaner_core::access::status()))
+}
+
+/// Progress of the cleanup in course (any module); polled while a cleanup call blocks.
+#[unsafe(no_mangle)]
+pub extern "C" fn mcl_clean_progress() -> *mut c_char {
+    respond(|| Ok(progress::snapshot()))
 }
 
 #[unsafe(no_mangle)]

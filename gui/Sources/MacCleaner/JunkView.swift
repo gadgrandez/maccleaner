@@ -162,10 +162,14 @@ struct JunkView: View {
                         .padding(.bottom, 96)
                     }
                     ActionBar {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(loc("\(formatBytes(store.selectedBytes)) selected")).font(.headline).monospacedDigit()
-                            if let last = store.lastClean {
-                                LastCleanSummary(report: last, cleanedBytes: last.trashedBytes + last.deletedBytes)
+                        if store.cleaning {
+                            CleanProgressView()
+                        } else {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(loc("\(formatBytes(store.selectedBytes)) selected")).font(.headline).monospacedDigit()
+                                if let last = store.lastClean {
+                                    LastCleanSummary(report: last, cleanedBytes: last.trashedBytes + last.deletedBytes)
+                                }
                             }
                         }
                     } trailing: {

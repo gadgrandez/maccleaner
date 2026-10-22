@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::clean::{CleanOutcome, CleanReport};
 use crate::fsutil;
 use crate::rules::{Action, home_dir};
-use crate::trash;
+use crate::{progress, trash};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -568,6 +568,8 @@ fn failure(path: String, category: Option<String>, error: String) -> CleanOutcom
 
 pub fn clean_at(home: &Path, running: &HashSet<String>, req: &PrivacyCleanRequest) -> CleanReport {
     let report = scan_at(home, running);
+    // The number of files is only known item by item: the progress shows what is being removed.
+    let _progress = progress::start(0, req.dry_run);
     let mut out = CleanReport { dry_run: req.dry_run, trashed_bytes: 0, deleted_bytes: 0, failed: 0, outcomes: Vec::new() };
     let mut seen = HashSet::new();
 
@@ -600,7 +602,7 @@ pub fn clean_at(home: &Path, running: &HashSet<String>, req: &PrivacyCleanReques
                 out.outcomes.push(failure(raw, Some(label.clone()), "outside the allowed paths".into()));
                 continue;
             }
-            let result = if req.dry_run { Ok(()) } else { trash::move_to_trash(path) };
+            let result = if req.dry_run { Ok(()) } else { progress::step(path, usage.bytes, || trash::move_to_trash(path)) };
             if result.is_ok() {
                 out.trashed_bytes += usage.bytes;
             }

@@ -1,12 +1,14 @@
 //! Validated cleaning: only direct entries of a rule root are acted on.
 
 use std::fs;
+use std::io::ErrorKind;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fsutil;
 use crate::rules::{Action, Rule};
+use crate::{fsutil, progress};
 use crate::trash;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,8 +72,37 @@ fn validate<'r>(rules: &'r [Rule], canon_roots: &[(usize, PathBuf)], raw: &str) 
     Err(error.into())
 }
 
+/// Deletes `path` for good. Entries can't be removed from read-only folders (Go's module cache
+/// is read-only on purpose), so on a permission error the owner's write permission is
+/// restored on every folder inside and the deletion is retried, as Finder does.
 fn remove(path: &Path) -> std::io::Result<()> {
-    if fs::symlink_metadata(path)?.is_dir() { fs::remove_dir_all(path) } else { fs::remove_file(path) }
+    if !fs::symlink_metadata(path)?.is_dir() {
+        return fs::remove_file(path);
+    }
+    match fs::remove_dir_all(path) {
+        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+            make_writable(path);
+            fs::remove_dir_all(path)
+        }
+        result => result,
+    }
+}
+
+/// Adds the owner's rwx to `dir` and the folders below it (symlinks are not followed).
+fn make_writable(dir: &Path) {
+    let Ok(md) = fs::symlink_metadata(dir) else { return };
+    if !md.is_dir() {
+        return;
+    }
+    let mode = md.permissions().mode();
+    if mode & 0o700 != 0o700 {
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(mode | 0o700));
+    }
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            make_writable(&entry.path());
+        }
+    }
 }
 
 pub fn clean(rules: &[Rule], req: &CleanRequest) -> CleanReport {
@@ -84,6 +115,7 @@ pub fn clean(rules: &[Rule], req: &CleanRequest) -> CleanReport {
     let validated: Vec<Result<(&Rule, PathBuf), String>> =
         req.paths.iter().map(|p| validate(rules, &canon_roots, p)).collect();
     let valid_paths: Vec<PathBuf> = validated.iter().filter_map(|v| v.as_ref().ok().map(|(_, p)| p.clone())).collect();
+    let _progress = progress::start(valid_paths.len(), req.dry_run);
     let mut valid_sizes = fsutil::usages(&valid_paths).into_iter().map(|u| u.bytes);
     let sizes: Vec<u64> = validated.iter().map(|v| if v.is_ok() { valid_sizes.next().unwrap_or(0) } else { 0 }).collect();
 
@@ -95,10 +127,10 @@ pub fn clean(rules: &[Rule], req: &CleanRequest) -> CleanReport {
                 let result = if req.dry_run {
                     Ok(())
                 } else {
-                    match rule.action {
+                    progress::step(&path, bytes, || match rule.action {
                         Action::Trash => trash::move_to_trash(&path),
                         Action::Delete => remove(&path).map_err(|e| e.to_string()),
-                    }
+                    })
                 };
                 if result.is_ok() {
                     match rule.action {
@@ -215,6 +247,22 @@ mod tests {
         let r = clean(&rules, &CleanRequest { paths: vec![s(&target)], dry_run: false });
         assert_eq!(r.failed, 0, "{:?}", r.outcomes);
         assert!(r.deleted_bytes > 0);
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn delete_handles_read_only_folders() {
+        let (tmp, rules) = setup();
+        // Like Go's module cache once in the Trash: read-only folders with files inside.
+        let target = tmp.path().join(".Trash/mod");
+        let deep = target.join("github.com/x/y@v1");
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("go.mod"), b"module y").unwrap();
+        for dir in [&deep, &deep.parent().unwrap().to_path_buf(), &target.join("github.com")] {
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        let r = clean(&rules, &CleanRequest { paths: vec![s(&target)], dry_run: false });
+        assert_eq!(r.failed, 0, "{:?}", r.outcomes);
         assert!(!target.exists());
     }
 }

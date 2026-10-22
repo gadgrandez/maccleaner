@@ -43,6 +43,16 @@ struct CleanOutcome: Codable, Identifiable, Sendable {
     var id: String { path }
 }
 
+/// Progress of the cleanup in course, polled while it runs.
+struct CleanProgress: Codable, Sendable {
+    let active: Bool
+    let done: UInt64
+    /// 0 when the number of items isn't known in advance.
+    let total: UInt64
+    let bytes: UInt64
+    let current: String?
+}
+
 struct CleanReport: Codable, Sendable {
     let dryRun: Bool
     let trashedBytes: UInt64

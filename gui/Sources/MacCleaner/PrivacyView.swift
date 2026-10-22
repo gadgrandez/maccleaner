@@ -98,7 +98,11 @@ struct PrivacyView: View {
                         .padding(.bottom, 96)
                     }
                     ActionBar {
-                        Text(loc("\(formatBytes(store.selectedBytes)) selected")).font(.headline).monospacedDigit()
+                        if store.cleaning {
+                            CleanProgressView()
+                        } else {
+                            Text(loc("\(formatBytes(store.selectedBytes)) selected")).font(.headline).monospacedDigit()
+                        }
                     } trailing: {
                         Button { store.confirming = true } label: {
                             Label(store.cleaning ? loc("Cleaning…") : loc("Remove traces"), systemImage: "hand.raised.slash.fill")

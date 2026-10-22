@@ -25,6 +25,9 @@ extension Core {
         try await call(request: PathsRequest(paths: paths, dryRun: false)) { mcl_clean($0) }
     }
 
+    /// Progress of the cleanup in course, whichever module started it.
+    static func cleanProgress() async throws -> CleanProgress { try await call { mcl_clean_progress() } }
+
     // MARK: Developer junk
 
     static func devProjects(_ request: DevProjectsRequest = DevProjectsRequest()) async throws -> DevProjectsReport {

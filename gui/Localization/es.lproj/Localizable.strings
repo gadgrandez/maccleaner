@@ -347,3 +347,9 @@
 /* Failures of the last cleanup */
 "Show what couldn't be cleaned" = "Ver qué no se pudo limpiar";
 "Couldn't clean" = "No se pudo limpiar";
+
+/* Cleanup progress */
+"%@ of %@" = "%1$@ de %2$@";
+"Preparing…" = "Preparando…";
+"Measuring sizes…" = "Midiendo tamaños…";
+"Moving to the Trash…" = "Moviendo a la Papelera…";

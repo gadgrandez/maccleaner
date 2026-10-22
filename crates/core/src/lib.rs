@@ -13,6 +13,7 @@ pub mod launchd;
 pub mod launchservices;
 pub mod performance;
 pub mod privacy;
+pub mod progress;
 pub mod rules;
 pub mod scan;
 pub mod space;

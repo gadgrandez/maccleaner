@@ -125,6 +125,9 @@ struct SmartCareView: View {
                 case .done:
                     Text(loc("Done: \(formatBytes(store.cleanedBytes)) moved to the Trash")).font(.title2.weight(.bold))
                     Text(loc("Empty the Trash to reclaim the space. The rest of the recommendations are below.")).foregroundStyle(.secondary)
+                case .cleaning:
+                    Text(loc("You can safely reclaim \(formatBytes(junkBytes))")).font(.title2.weight(.bold))
+                    CleanProgressView()
                 default:
                     Text(loc("You can safely reclaim \(formatBytes(junkBytes))")).font(.title2.weight(.bold))
                     Text(loc("Only the junk checked by default is cleaned. Everything else needs your review.")).foregroundStyle(.secondary)

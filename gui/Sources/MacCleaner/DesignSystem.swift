@@ -459,6 +459,62 @@ struct ActionBar<Leading: View, Trailing: View>: View {
     }
 }
 
+/// Shown while a cleanup runs: a spinner, a progress bar with the count and the bytes cleaned,
+/// and the item being removed right now. It polls the core itself while it is on screen.
+struct CleanProgressView: View {
+    var title = loc("Cleaning…")
+    private let progress = State<CleanProgress?>(initialValue: nil)
+
+    var body: some View {
+        let p = progress.wrappedValue.flatMap { $0.active ? $0 : nil }
+        VStack(alignment: .leading, spacing: Space.xs) {
+            HStack(spacing: Space.s) {
+                ProgressView().controlSize(.small)
+                Text(title).font(.headline)
+                Spacer(minLength: Space.s)
+                if let p {
+                    Text(detail(p)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+            Group {
+                if let p, p.total > 0 {
+                    ProgressView(value: Double(p.done), total: Double(p.total))
+                } else {
+                    ProgressView()
+                }
+            }
+            .progressViewStyle(.linear)
+            Text(currentItem(p))
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .task { await poll() }
+    }
+
+    private func detail(_ p: CleanProgress) -> String {
+        let bytes = p.bytes > 0 ? formatBytes(p.bytes) : nil
+        guard p.total > 0 else { return bytes ?? "" }
+        let count = loc("\(Int(p.done).formatted()) of \(Int(p.total).formatted())")
+        return bytes.map { "\(count) · \($0)" } ?? count
+    }
+
+    private func currentItem(_ p: CleanProgress?) -> String {
+        guard let p else { return loc("Preparing…") }
+        return p.current.map(abbreviatingHome) ?? loc("Measuring sizes…")
+    }
+
+    private func poll() async {
+        while !Task.isCancelled {
+            if let snapshot = try? await Core.cleanProgress() { progress.wrappedValue = snapshot }
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+    }
+}
+
 /// "Last clean" line of an action bar. When something failed, its count opens the list of
 /// what couldn't be cleaned and why.
 struct LastCleanSummary: View {

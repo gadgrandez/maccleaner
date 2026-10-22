@@ -16,7 +16,7 @@ use crate::codesign;
 use crate::fsutil;
 use crate::performance::{self, missing_program, read_plist, sh_quote};
 use crate::rules::{Action, home_dir};
-use crate::trash;
+use crate::{progress, trash};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -961,6 +961,7 @@ type Checked = (String, Result<(PathBuf, String), String>);
 /// Executes (or simulates) the deletions. With `gate_first`, if the first fails the rest are left untouched.
 fn execute(checked: Vec<Checked>, dry_run: bool, gate_first: bool, remove: Remover) -> CleanReport {
     let valid: Vec<PathBuf> = checked.iter().filter_map(|(_, v)| v.as_ref().ok().map(|(p, _)| p.clone())).collect();
+    let _progress = progress::start(valid.len(), dry_run);
     let mut sizes = fsutil::usages(&valid).into_iter().map(|u| u.bytes);
     let mut report = CleanReport { dry_run, trashed_bytes: 0, deleted_bytes: 0, failed: 0, outcomes: Vec::new() };
     let mut gated = false;
@@ -974,7 +975,7 @@ fn execute(checked: Vec<Checked>, dry_run: bool, gate_first: bool, remove: Remov
                 } else if dry_run {
                     Ok(())
                 } else {
-                    remove(&path)
+                    progress::step(&path, bytes, || remove(&path))
                 };
                 if result.is_ok() {
                     report.trashed_bytes += bytes;
