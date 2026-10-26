@@ -1,5 +1,76 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
+
+/// The menu bar monitor runs as a separate, lightweight process: MacCleaner's own executable
+/// inside `Contents/Library/LoginItems/MacCleaner Menu.app`, started at login by a user
+/// LaunchAgent (like the monitor). It only polls the system status, so it doesn't load any of
+/// the app's modules.
+@MainActor
+enum MenuBarHelper {
+    static let bundleIdentifier = "com.maccleaner.menu"
+    static let appBundleIdentifier = "com.maccleaner.app"
+
+    /// Starts (or stops) the helper and its start at login; does nothing outside an app bundle
+    /// (`swift run`).
+    static func apply(enabled: Bool) {
+        guard let program = helperExecutable else { return }
+        removeLegacyLoginItem()
+        Task {
+            if enabled {
+                _ = try? await Core.enableMenuBar(program: program)
+            } else {
+                _ = try? await Core.disableMenuBar()
+            }
+        }
+    }
+
+    /// Earlier builds registered the helper with SMAppService, whose registration stops working
+    /// after an update; the LaunchAgent replaces it.
+    private static func removeLegacyLoginItem() {
+        let legacy = SMAppService.loginItem(identifier: bundleIdentifier)
+        if legacy.status != .notRegistered { try? legacy.unregister() }
+    }
+
+    private static var helperExecutable: String? {
+        let url = Bundle.main.bundleURL.appendingPathComponent("Contents/Library/LoginItems/MacCleaner Menu.app/Contents/MacOS/MacCleaner Menu")
+        return FileManager.default.isExecutableFile(atPath: url.path) ? url.path : nil
+    }
+
+    /// Opens (or brings forward) MacCleaner from the helper: its bundle is four levels up.
+    static func openMainApp() {
+        let enclosing = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let url = enclosing.pathExtension == "app"
+            ? enclosing
+            : NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleIdentifier)
+        guard let url else { return }
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+    }
+}
+
+/// Entry point of the helper process: only the menu bar item.
+struct MenuBarApp: App {
+    // No @State: in the macOS 27 SDK it is a macro that Command Line Tools doesn't ship.
+    private let store = MenuBarStore()
+
+    init() {
+        // A single instance, however it was launched (by launchd or by opening the bundle).
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: MenuBarHelper.bundleIdentifier)
+            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+        if !others.isEmpty { exit(0) }
+        Task { [store] in await store.run() }
+    }
+
+    var body: some Scene {
+        MenuBarExtra {
+            MenuBarPanel(store: store)
+        } label: {
+            MenuBarLabel(store: store)
+        }
+        .menuBarExtraStyle(.window)
+    }
+}
 
 /// Readings of the menu bar monitor, refreshed every few seconds while it is shown.
 @MainActor
@@ -28,10 +99,10 @@ final class MenuBarStore {
         return Double(total - delta[2]) / Double(total)
     }
 
-    /// Polls while `isShown()` holds, for as long as the app runs.
-    func run(isShown: @escaping () -> Bool) async {
+    /// Polls for as long as the process runs.
+    func run() async {
         while !Task.isCancelled {
-            if isShown() { await refresh() }
+            await refresh()
             try? await Task.sleep(for: Self.interval)
         }
     }
@@ -53,7 +124,6 @@ struct MenuBarLabel: View {
 /// Panel shown when clicking the menu bar item.
 struct MenuBarPanel: View {
     let store: MenuBarStore
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.m) {
@@ -71,18 +141,13 @@ struct MenuBarPanel: View {
             }
             Divider()
             HStack(spacing: Space.s) {
-                Button {
-                    openWindow(id: MacCleanerApp.mainWindow)
-                    NSApp.activate(ignoringOtherApps: true)
-                } label: {
+                Button { MenuBarHelper.openMainApp() } label: {
                     Label(loc("Open MacCleaner"), systemImage: "macwindow")
                 }
                 .primaryActionStyle()
                 Spacer()
-                SettingsLink { Image(systemName: "gearshape") }
-                    .help(loc("Settings"))
                 Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }
-                    .help(loc("Quit MacCleaner"))
+                    .help(loc("Quit the menu bar monitor until the next login"))
             }
             .buttonStyle(.borderless)
         }

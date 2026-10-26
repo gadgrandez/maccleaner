@@ -17,6 +17,13 @@ extension Core {
         try await call(argument: program) { mcl_monitor_install($0) }
     }
 
+    /// Menu bar monitor: started now and at login (`program`: the helper's executable).
+    static func enableMenuBar(program: String) async throws -> MonitorStatus {
+        try await call(argument: program) { mcl_menu_bar_enable($0) }
+    }
+
+    static func disableMenuBar() async throws -> MonitorStatus { try await call { mcl_menu_bar_disable() } }
+
     // MARK: System junk
 
     static func scan() async throws -> ScanReport { try await call { mcl_scan() } }

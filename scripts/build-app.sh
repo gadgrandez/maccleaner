@@ -45,6 +45,32 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+# Menu bar monitor: the same executable in its own background-only bundle, registered by the
+# app as a login item (SMAppService looks for it in Contents/Library/LoginItems).
+MENU="$APP/Contents/Library/LoginItems/MacCleaner Menu.app"
+mkdir -p "$MENU/Contents/MacOS" "$MENU/Contents/Resources"
+cp "gui/.build/release/MacCleaner" "$MENU/Contents/MacOS/MacCleaner Menu"
+cp -R gui/Localization/*.lproj "$MENU/Contents/Resources/"
+cat > "$MENU/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>com.maccleaner.menu</string>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleLocalizations</key><array><string>en</string><string>es</string></array>
+    <key>CFBundleName</key><string>MacCleaner Menu</string>
+    <key>CFBundleExecutable</key><string>MacCleaner Menu</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>$VERSION</string>
+    <key>CFBundleVersion</key><string>$VERSION</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>LSUIElement</key><true/>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+</dict>
+</plist>
+PLIST
+
 # Sign with the local "MacCleaner Local Signing" certificate when available: its designated
 # requirement does not change between builds, so macOS keeps permissions such as Full Disk
 # Access. Otherwise sign ad hoc (the permission must then be granted again after every build).
@@ -56,6 +82,7 @@ if [ -z "$SIGN_ID" ]; then
     SIGN_ID="-"
 fi
 codesign --force --sign "$SIGN_ID" --identifier com.maccleaner.monitor "$APP/Contents/MacOS/maccleaner-monitor"
+codesign --force --sign "$SIGN_ID" "$MENU"
 codesign --force --sign "$SIGN_ID" "$APP"
 
 du -sh "$APP"

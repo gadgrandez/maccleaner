@@ -86,6 +86,7 @@ struct SystemStatus: Codable, Sendable {
     let cpuTicks: [UInt64]
 }
 
+/// Status of one of our LaunchAgents (the monitor or the menu bar monitor).
 struct MonitorStatus: Codable, Sendable {
     let installed: Bool
     let running: Bool

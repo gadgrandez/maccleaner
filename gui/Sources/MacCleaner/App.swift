@@ -10,7 +10,12 @@ enum Entry {
             let posted = MonitorAlert(arguments: Array(args[(i + 1)...])).map(Notifier.post) ?? false
             exit(posted ? 0 : 1)
         }
-        MacCleanerApp.main()
+        // The same executable runs the menu bar helper from its own bundle (a login item).
+        if Bundle.main.bundleIdentifier == MenuBarHelper.bundleIdentifier {
+            MenuBarApp.main()
+        } else {
+            MacCleanerApp.main()
+        }
     }
 }
 
@@ -35,12 +40,5 @@ struct MacCleanerApp: App {
             SettingsView(preferences: state.preferences)
         }
 
-        MenuBarExtra(isInserted: Binding(get: { state.preferences.showInMenuBar },
-                                         set: { state.preferences.showInMenuBar = $0 })) {
-            MenuBarPanel(store: state.menuBar)
-        } label: {
-            MenuBarLabel(store: state.menuBar)
-        }
-        .menuBarExtraStyle(.window)
     }
 }

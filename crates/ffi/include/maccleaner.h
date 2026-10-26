@@ -32,6 +32,10 @@ char *mcl_monitor_status(void);
 char *mcl_monitor_install(const char *program_path);
 char *mcl_monitor_uninstall(void);
 char *mcl_monitor_info(void);
+/* Menu bar monitor (LaunchAgent com.maccleaner.menu): program_path is the executable of
+   MacCleaner Menu.app. Both -> {"installed","running","pid","program"} */
+char *mcl_menu_bar_enable(const char *program_path);
+char *mcl_menu_bar_disable(void);
 
 void mcl_string_free(char *s);
 

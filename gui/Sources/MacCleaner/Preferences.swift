@@ -17,15 +17,20 @@ final class Preferences {
         }
     }
 
-    /// Resource monitor in the menu bar. On by default.
+    /// Resource monitor in the menu bar (a login item that keeps running after quitting the app).
+    /// On by default.
     var showInMenuBar: Bool {
-        didSet { UserDefaults.standard.set(showInMenuBar, forKey: Self.showInMenuBarKey) }
+        didSet {
+            UserDefaults.standard.set(showInMenuBar, forKey: Self.showInMenuBarKey)
+            MenuBarHelper.apply(enabled: showInMenuBar)
+        }
     }
 
     init() {
         showInMenuBar = UserDefaults.standard.object(forKey: Self.showInMenuBarKey) as? Bool ?? true
         deletePermanently = UserDefaults.standard.bool(forKey: Self.deletePermanentlyKey)
         Core.setDeletePermanently(deletePermanently)
+        MenuBarHelper.apply(enabled: showInMenuBar)
     }
 
     // MARK: Wording of the cleanups, which depends on how they remove items
@@ -49,7 +54,7 @@ struct SettingsView: View {
             Section(loc("Menu bar")) {
                 Toggle(isOn: Binding(get: { preferences.showInMenuBar }, set: { preferences.showInMenuBar = $0 })) {
                     Text(loc("Show the resource monitor in the menu bar"))
-                    Text(loc("CPU, memory, disk and swap at a glance while MacCleaner is open."))
+                    Text(loc("CPU, memory, disk and swap at a glance, even when MacCleaner is closed. It starts when you log in."))
                 }
                 .toggleStyle(.switch)
             }

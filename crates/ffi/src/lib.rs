@@ -103,24 +103,38 @@ pub extern "C" fn mcl_system_status() -> *mut c_char {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn mcl_monitor_status() -> *mut c_char {
-    respond(|| Ok(launchd::status()))
+    respond(|| Ok(launchd::MONITOR.status()))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcl_monitor_install(program_path: *const c_char) -> *mut c_char {
     let raw = unsafe { arg(program_path) };
-    respond(move || launchd::install(Path::new(&raw?)).map(|_| launchd::status()))
+    respond(move || launchd::MONITOR.install(Path::new(&raw?)).map(|_| launchd::MONITOR.status()))
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn mcl_monitor_uninstall() -> *mut c_char {
-    respond(|| launchd::uninstall().map(|_| launchd::status()))
+    respond(|| launchd::MONITOR.uninstall().map(|_| launchd::MONITOR.status()))
 }
 
 #[derive(Serialize)]
 struct MonitorInfo {
     state: Option<state::MonitorState>,
     config: state::MonitorConfig,
+}
+
+/// Starts the menu bar monitor (`program`: the helper's executable) at login and now; does
+/// nothing if it already runs that program. -> AgentStatus
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mcl_menu_bar_enable(program_path: *const c_char) -> *mut c_char {
+    let raw = unsafe { arg(program_path) };
+    respond(move || launchd::MENU_BAR.ensure(Path::new(&raw?)).map(|_| launchd::MENU_BAR.status()))
+}
+
+/// Stops the menu bar monitor and removes it from the login. -> AgentStatus
+#[unsafe(no_mangle)]
+pub extern "C" fn mcl_menu_bar_disable() -> *mut c_char {
+    respond(|| launchd::MENU_BAR.uninstall().map(|_| launchd::MENU_BAR.status()))
 }
 
 #[unsafe(no_mangle)]

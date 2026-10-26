@@ -377,8 +377,8 @@
 "CPU %@" = "CPU %@";
 "Memory pressure: %@" = "Presión de memoria: %@";
 "Open MacCleaner" = "Abrir MacCleaner";
-"Quit MacCleaner" = "Salir de MacCleaner";
+"Quit the menu bar monitor until the next login" = "Cerrar el monitor de la barra de menús hasta el próximo inicio de sesión";
 "load %@" = "carga %@";
 "Menu bar" = "Barra de menús";
 "Show the resource monitor in the menu bar" = "Mostrar el monitor de recursos en la barra de menús";
-"CPU, memory, disk and swap at a glance while MacCleaner is open." = "CPU, memoria, disco y swap de un vistazo mientras MacCleaner está abierto.";
+"CPU, memory, disk and swap at a glance, even when MacCleaner is closed. It starts when you log in." = "CPU, memoria, disco y swap de un vistazo, incluso con MacCleaner cerrado. Se inicia al iniciar sesión.";
