@@ -1,9 +1,7 @@
 //! Validated cleaning: only direct entries of a rule root are acted on.
 
 use std::fs;
-use std::io::ErrorKind;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +42,20 @@ pub struct CleanReport {
     pub outcomes: Vec<CleanOutcome>,
 }
 
+impl CleanReport {
+    pub fn new(dry_run: bool) -> Self {
+        Self { dry_run, trashed_bytes: 0, deleted_bytes: 0, failed: 0, outcomes: Vec::new() }
+    }
+
+    /// Counts the bytes of an item removed with `action`.
+    pub fn add_removed(&mut self, action: Action, bytes: u64) {
+        match action {
+            Action::Trash => self.trashed_bytes += bytes,
+            Action::Delete => self.deleted_bytes += bytes,
+        }
+    }
+}
+
 fn validate<'r>(rules: &'r [Rule], canon_roots: &[(usize, PathBuf)], raw: &str) -> Result<(&'r Rule, PathBuf), String> {
     let path = PathBuf::from(raw);
     if !path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir)) {
@@ -72,40 +84,13 @@ fn validate<'r>(rules: &'r [Rule], canon_roots: &[(usize, PathBuf)], raw: &str) 
     Err(error.into())
 }
 
-/// Deletes `path` for good. Entries can't be removed from read-only folders (Go's module cache
-/// is read-only on purpose), so on a permission error the owner's write permission is
-/// restored on every folder inside and the deletion is retried, as Finder does.
-fn remove(path: &Path) -> std::io::Result<()> {
-    if !fs::symlink_metadata(path)?.is_dir() {
-        return fs::remove_file(path);
-    }
-    match fs::remove_dir_all(path) {
-        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
-            make_writable(path);
-            fs::remove_dir_all(path)
-        }
-        result => result,
-    }
-}
-
-/// Adds the owner's rwx to `dir` and the folders below it (symlinks are not followed).
-fn make_writable(dir: &Path) {
-    let Ok(md) = fs::symlink_metadata(dir) else { return };
-    if !md.is_dir() {
-        return;
-    }
-    let mode = md.permissions().mode();
-    if mode & 0o700 != 0o700 {
-        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(mode | 0o700));
-    }
-    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
-        if entry.file_type().is_ok_and(|t| t.is_dir()) {
-            make_writable(&entry.path());
-        }
-    }
-}
-
 pub fn clean(rules: &[Rule], req: &CleanRequest) -> CleanReport {
+    clean_with(rules, req, trash::preferred_action())
+}
+
+/// `preferred` is how the items that would go to the Trash are removed; the Trash's own
+/// rules always delete.
+fn clean_with(rules: &[Rule], req: &CleanRequest, preferred: Action) -> CleanReport {
     let canon_roots: Vec<(usize, PathBuf)> = rules
         .iter()
         .enumerate()
@@ -119,29 +104,20 @@ pub fn clean(rules: &[Rule], req: &CleanRequest) -> CleanReport {
     let mut valid_sizes = fsutil::usages(&valid_paths).into_iter().map(|u| u.bytes);
     let sizes: Vec<u64> = validated.iter().map(|v| if v.is_ok() { valid_sizes.next().unwrap_or(0) } else { 0 }).collect();
 
-    let mut report = CleanReport { dry_run: req.dry_run, trashed_bytes: 0, deleted_bytes: 0, failed: 0, outcomes: Vec::new() };
+    let mut report = CleanReport::new(req.dry_run);
     for ((raw, v), bytes) in req.paths.iter().zip(validated).zip(sizes) {
         let outcome = match v {
             Err(error) => CleanOutcome { path: raw.clone(), category: None, action: None, bytes: 0, ok: false, error: Some(error) },
             Ok((rule, path)) => {
-                let result = if req.dry_run {
-                    Ok(())
-                } else {
-                    progress::step(&path, bytes, || match rule.action {
-                        Action::Trash => trash::move_to_trash(&path),
-                        Action::Delete => remove(&path).map_err(|e| e.to_string()),
-                    })
-                };
+                let action = if rule.action == Action::Delete { Action::Delete } else { preferred };
+                let result = if req.dry_run { Ok(action) } else { progress::step(&path, bytes, || trash::discard(&path, action)) };
                 if result.is_ok() {
-                    match rule.action {
-                        Action::Trash => report.trashed_bytes += bytes,
-                        Action::Delete => report.deleted_bytes += bytes,
-                    }
+                    report.add_removed(action, bytes);
                 }
                 CleanOutcome {
                     path: raw.clone(),
                     category: Some(rule.id.clone()),
-                    action: Some(rule.action),
+                    action: Some(action),
                     bytes,
                     ok: result.is_ok(),
                     error: result.err(),
@@ -161,6 +137,8 @@ mod tests {
     use super::*;
     use crate::rules::resolve;
     use crate::testutil::TempDir;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
 
     fn setup() -> (TempDir, Vec<Rule>) {
         let tmp = TempDir::new("clean");
@@ -247,6 +225,17 @@ mod tests {
         let r = clean(&rules, &CleanRequest { paths: vec![s(&target)], dry_run: false });
         assert_eq!(r.failed, 0, "{:?}", r.outcomes);
         assert!(r.deleted_bytes > 0);
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn permanent_preference_deletes_instead_of_trashing() {
+        let (tmp, rules) = setup();
+        let target = tmp.path().join("Library/Caches/app");
+        let r = clean_with(&rules, &CleanRequest { paths: vec![s(&target)], dry_run: false }, Action::Delete);
+        assert_eq!(r.failed, 0, "{:?}", r.outcomes);
+        assert_eq!((r.trashed_bytes, r.outcomes[0].action), (0, Some(Action::Delete)));
+        assert!(r.deleted_bytes >= 20_000);
         assert!(!target.exists());
     }
 

@@ -27,5 +27,9 @@ struct MacCleanerApp: App {
         }
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unified(showsTitle: false))
+
+        Settings {
+            SettingsView(preferences: state.preferences)
+        }
     }
 }

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clean::{CleanOutcome, CleanReport};
 use crate::fsutil;
-use crate::rules::{Action, home_dir};
+use crate::rules::home_dir;
 use crate::{progress, trash};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -570,7 +570,8 @@ pub fn clean_at(home: &Path, running: &HashSet<String>, req: &PrivacyCleanReques
     let report = scan_at(home, running);
     // The number of files is only known item by item: the progress shows what is being removed.
     let _progress = progress::start(0, req.dry_run);
-    let mut out = CleanReport { dry_run: req.dry_run, trashed_bytes: 0, deleted_bytes: 0, failed: 0, outcomes: Vec::new() };
+    let mut out = CleanReport::new(req.dry_run);
+    let action = trash::preferred_action();
     let mut seen = HashSet::new();
 
     for r in &req.items {
@@ -602,14 +603,14 @@ pub fn clean_at(home: &Path, running: &HashSet<String>, req: &PrivacyCleanReques
                 out.outcomes.push(failure(raw, Some(label.clone()), "outside the allowed paths".into()));
                 continue;
             }
-            let result = if req.dry_run { Ok(()) } else { progress::step(path, usage.bytes, || trash::move_to_trash(path)) };
+            let result = if req.dry_run { Ok(action) } else { progress::step(path, usage.bytes, || trash::discard(path, action)) };
             if result.is_ok() {
-                out.trashed_bytes += usage.bytes;
+                out.add_removed(action, usage.bytes);
             }
             out.outcomes.push(CleanOutcome {
                 path: raw,
                 category: Some(label.clone()),
-                action: Some(Action::Trash),
+                action: Some(action),
                 bytes: usage.bytes,
                 ok: result.is_ok(),
                 error: result.err(),
@@ -623,6 +624,7 @@ pub fn clean_at(home: &Path, running: &HashSet<String>, req: &PrivacyCleanReques
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::Action;
     use crate::testutil::TempDir;
 
     fn touch(path: &Path, bytes: usize) {

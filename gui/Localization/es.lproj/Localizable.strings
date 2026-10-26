@@ -353,3 +353,22 @@
 "Preparing…" = "Preparando…";
 "Measuring sizes…" = "Midiendo tamaños…";
 "Moving to the Trash…" = "Moviendo a la Papelera…";
+
+/* Settings: permanent deletion */
+"Settings" = "Ajustes";
+"Delete permanently instead of moving to the Trash" = "Eliminar definitivamente en lugar de mover a la Papelera";
+"Frees the space right away, but the items can't be recovered. Items already in the Trash are always deleted permanently." = "Libera el espacio al instante, pero los elementos no se pueden recuperar. Lo que ya está en la Papelera siempre se elimina definitivamente.";
+"Cleanups can't be undone." = "Las limpiezas no se pueden deshacer.";
+"Delete permanently from now on?" = "¿Eliminar definitivamente a partir de ahora?";
+"Cleaned items won't go to the Trash, so you won't be able to put them back." = "Los elementos limpiados no irán a la Papelera, así que no podrás restaurarlos.";
+"Delete Permanently" = "Eliminar definitivamente";
+"Delete Permanently (%@)" = "Eliminar definitivamente (%@)";
+"Deleting…" = "Eliminando…";
+"The items will be deleted permanently and can't be recovered." = "Los elementos se eliminarán definitivamente y no se podrán recuperar.";
+"Delete %@ permanently?" = "¿Eliminar %@ definitivamente?";
+"The app and the selected leftovers will be deleted permanently." = "La app y los restos seleccionados se eliminarán definitivamente.";
+"Folders will be deleted permanently and %@ command cleanups (Homebrew/Docker) will run. This can't be undone. Dependencies are regenerated with npm install, cargo build, pod install…" = "Las carpetas se eliminarán definitivamente y se ejecutarán %@ limpiezas por comando (Homebrew/Docker). No se puede deshacer. Las dependencias se regeneran con npm install, cargo build, pod install…";
+"Folders will be deleted permanently. Dependencies are regenerated with npm install, cargo build, pod install…" = "Las carpetas se eliminarán definitivamente. Las dependencias se regeneran con npm install, cargo build, pod install…";
+"Checks caches, logs, Xcode and simulator data, Mail downloads and more. Everything is deleted permanently." = "Revisa cachés, registros, datos de Xcode y simuladores, descargas de Mail y más. Todo se elimina definitivamente.";
+"Done: %@ deleted" = "Listo: %@ eliminados";
+"The space is already free. The rest of the recommendations are below." = "El espacio ya está libre. El resto de recomendaciones está abajo.";

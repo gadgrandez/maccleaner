@@ -141,7 +141,9 @@ struct JunkView: View {
         } content: {
             if store.report == nil || store.scanning && store.report == nil {
                 HeroScan(theme: Destination.junk.theme, symbol: "trash.fill", title: loc("Find junk on your Mac"),
-                         message: loc("Checks caches, logs, Xcode and simulator data, Mail downloads and more. Everything goes to the Trash."),
+                         message: state.preferences.deletePermanently
+                             ? loc("Checks caches, logs, Xcode and simulator data, Mail downloads and more. Everything is deleted permanently.")
+                             : loc("Checks caches, logs, Xcode and simulator data, Mail downloads and more. Everything goes to the Trash."),
                          busy: store.scanning, waiting: store.isWaiting) { Task { await store.scan() } }
             } else if store.categories.isEmpty {
                 EmptyResult(symbol: "checkmark.seal.fill", title: loc("All clean"), message: loc("No junk was found."))
@@ -168,7 +170,7 @@ struct JunkView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(loc("\(formatBytes(store.selectedBytes)) selected")).font(.headline).monospacedDigit()
                                 if let last = store.lastClean {
-                                    LastCleanSummary(report: last, cleanedBytes: last.trashedBytes + last.deletedBytes)
+                                    LastCleanSummary(report: last, cleanedBytes: last.removedBytes)
                                 }
                             }
                         }
@@ -184,13 +186,15 @@ struct JunkView: View {
             }
         }
         .confirmationDialog(loc("Clean \(formatBytes(store.selectedBytes))?"), isPresented: $bindable.confirming) {
-            Button(store.deletesPermanently ? loc("Clean (includes permanent deletion)") : loc("Move to Trash"), role: .destructive) {
+            let preferences = state.preferences
+            Button(store.deletesPermanently && !preferences.deletePermanently ? loc("Clean (includes permanent deletion)") : preferences.removeTitle,
+                   role: .destructive) {
                 Task { await store.clean() }
             }
         } message: {
-            Text(store.deletesPermanently
+            Text(store.deletesPermanently && !state.preferences.deletePermanently
                  ? loc("Items in the Trash are deleted forever; everything else is moved to the Trash.")
-                 : loc("You can recover the items from the Trash until you empty it."))
+                 : state.preferences.recoveryNote)
         }
     }
 

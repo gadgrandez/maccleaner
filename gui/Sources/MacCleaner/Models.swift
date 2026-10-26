@@ -59,6 +59,9 @@ struct CleanReport: Codable, Sendable {
     let deletedBytes: UInt64
     let failed: UInt64
     let outcomes: [CleanOutcome]
+
+    /// Bytes moved to the Trash or deleted.
+    var removedBytes: UInt64 { trashedBytes + deletedBytes }
 }
 
 enum Pressure: String, Codable, Sendable {

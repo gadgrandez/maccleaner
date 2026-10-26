@@ -24,7 +24,7 @@ use twox_hash::XxHash3_128;
 
 use crate::clean::{CleanOutcome, CleanReport, CleanRequest};
 use crate::fsutil::{self, Detail, FileMeta, Visitor};
-use crate::rules::{self, Action};
+use crate::rules;
 use crate::{progress, trash};
 
 const DAY: u64 = 86_400;
@@ -746,20 +746,21 @@ pub fn trash_paths_in(home: &Path, req: &CleanRequest) -> CleanReport {
     let _progress = progress::start(valid.len(), req.dry_run);
     let mut sizes = fsutil::usages(&valid).into_iter().map(|u| u.bytes);
 
-    let mut report = CleanReport { dry_run: req.dry_run, trashed_bytes: 0, deleted_bytes: 0, failed: 0, outcomes: Vec::new() };
+    let mut report = CleanReport::new(req.dry_run);
+    let action = trash::preferred_action();
     for (raw, v) in req.paths.iter().zip(validated) {
         let outcome = match v {
             Err(error) => CleanOutcome { path: raw.clone(), category: None, action: None, bytes: 0, ok: false, error: Some(error) },
             Ok(path) => {
                 let bytes = sizes.next().unwrap_or(0);
-                let result = if req.dry_run { Ok(()) } else { progress::step(&path, bytes, || trash::move_to_trash(&path)) };
+                let result = if req.dry_run { Ok(action) } else { progress::step(&path, bytes, || trash::discard(&path, action)) };
                 if result.is_ok() {
-                    report.trashed_bytes += bytes;
+                    report.add_removed(action, bytes);
                 }
                 CleanOutcome {
                     path: raw.clone(),
                     category: Some("clutter".into()),
-                    action: Some(Action::Trash),
+                    action: Some(action),
                     bytes,
                     ok: result.is_ok(),
                     error: result.err(),

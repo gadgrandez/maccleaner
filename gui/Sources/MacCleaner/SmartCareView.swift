@@ -9,6 +9,8 @@ final class SmartCareStore {
     private weak var state: AppState?
     var phase: Phase = .idle
     var cleanedBytes: UInt64 = 0
+    /// The last cleanup deleted the items instead of moving them to the Trash.
+    var cleanedPermanently = false
 
     func attach(_ state: AppState) { self.state = state }
 
@@ -46,6 +48,7 @@ final class SmartCareStore {
         guard let s = state else { return }
         phase = .cleaning
         let before = s.junk.selectedBytes
+        cleanedPermanently = s.preferences.deletePermanently
         await s.junk.clean()
         cleanedBytes = before
         phase = .done
@@ -123,8 +126,13 @@ struct SmartCareView: View {
             VStack(alignment: .leading, spacing: 4) {
                 switch store.phase {
                 case .done:
-                    Text(loc("Done: \(formatBytes(store.cleanedBytes)) moved to the Trash")).font(.title2.weight(.bold))
-                    Text(loc("Empty the Trash to reclaim the space. The rest of the recommendations are below.")).foregroundStyle(.secondary)
+                    if store.cleanedPermanently {
+                        Text(loc("Done: \(formatBytes(store.cleanedBytes)) deleted")).font(.title2.weight(.bold))
+                        Text(loc("The space is already free. The rest of the recommendations are below.")).foregroundStyle(.secondary)
+                    } else {
+                        Text(loc("Done: \(formatBytes(store.cleanedBytes)) moved to the Trash")).font(.title2.weight(.bold))
+                        Text(loc("Empty the Trash to reclaim the space. The rest of the recommendations are below.")).foregroundStyle(.secondary)
+                    }
                 case .cleaning:
                     Text(loc("You can safely reclaim \(formatBytes(junkBytes))")).font(.title2.weight(.bold))
                     CleanProgressView()

@@ -114,7 +114,7 @@ struct PrivacyView: View {
             }
         }
         .confirmationDialog(loc("Remove the selected traces?"), isPresented: $bindable.confirming) {
-            Button(loc("Move to Trash"), role: .destructive) { Task { await store.clean() } }
+            Button(state.preferences.removeTitle, role: .destructive) { Task { await store.clean() } }
         } message: {
             Text(loc("You'll be signed out of websites whose cookies you remove. Browsers must be closed."))
         }

@@ -157,7 +157,7 @@ struct DevView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(loc("\(formatBytes(store.selectedBytes)) selected")).font(.headline).monospacedDigit()
                                 if let last = store.lastClean {
-                                    LastCleanSummary(report: last, cleanedBytes: last.trashedBytes)
+                                    LastCleanSummary(report: last, cleanedBytes: last.removedBytes)
                                 }
                             }
                         }
@@ -174,9 +174,21 @@ struct DevView: View {
         .confirmationDialog(loc("Clean \(formatBytes(store.selectedBytes))?"), isPresented: $bindable.confirming) {
             Button(loc("Clean"), role: .destructive) { Task { await store.clean() } }
         } message: {
-            Text(store.selectedCommandCount > 0
-                 ? loc("Folders will go to the Trash and \(store.selectedCommandCount.formatted()) command cleanups (Homebrew/Docker) will run, which can't be undone. Dependencies are regenerated with npm install, cargo build, pod install…")
-                 : loc("Folders will go to the Trash. Dependencies are regenerated with npm install, cargo build, pod install…"))
+            Text(cleanMessage(store))
+        }
+    }
+
+    private func cleanMessage(_ store: DevStore) -> String {
+        let commands = store.selectedCommandCount.formatted()
+        switch (state.preferences.deletePermanently, store.selectedCommandCount > 0) {
+        case (false, true):
+            return loc("Folders will go to the Trash and \(commands) command cleanups (Homebrew/Docker) will run, which can't be undone. Dependencies are regenerated with npm install, cargo build, pod install…")
+        case (false, false):
+            return loc("Folders will go to the Trash. Dependencies are regenerated with npm install, cargo build, pod install…")
+        case (true, true):
+            return loc("Folders will be deleted permanently and \(commands) command cleanups (Homebrew/Docker) will run. This can't be undone. Dependencies are regenerated with npm install, cargo build, pod install…")
+        case (true, false):
+            return loc("Folders will be deleted permanently. Dependencies are regenerated with npm install, cargo build, pod install…")
         }
     }
 

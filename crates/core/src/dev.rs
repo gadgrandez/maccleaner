@@ -725,20 +725,21 @@ pub fn clean_in(home: &Path, req: &DevCleanRequest) -> CleanReport {
     let valid: Vec<PathBuf> = checked.iter().filter_map(|(_, c)| c.as_ref().ok().map(|(p, _)| p.clone())).collect();
     let _progress = progress::start(valid.len(), req.dry_run);
     let mut sizes = fsutil::usages(&valid).into_iter();
-    let mut report = CleanReport { dry_run: req.dry_run, trashed_bytes: 0, deleted_bytes: 0, failed: 0, outcomes: Vec::new() };
+    let mut report = CleanReport::new(req.dry_run);
+    let action = trash::preferred_action();
     for (raw, check) in checked {
         let outcome = match check {
             Err(error) => CleanOutcome { path: raw, category: None, action: None, bytes: 0, ok: false, error: Some(error) },
             Ok((path, category)) => {
                 let bytes = sizes.next().map(|u| u.bytes).unwrap_or(0);
-                let result = if req.dry_run { Ok(()) } else { progress::step(&path, bytes, || trash::move_to_trash(&path)) };
+                let result = if req.dry_run { Ok(action) } else { progress::step(&path, bytes, || trash::discard(&path, action)) };
                 if result.is_ok() {
-                    report.trashed_bytes += bytes;
+                    report.add_removed(action, bytes);
                 }
                 CleanOutcome {
                     path: raw,
                     category: Some(category.into()),
-                    action: Some(crate::rules::Action::Trash),
+                    action: Some(action),
                     bytes,
                     ok: result.is_ok(),
                     error: result.err(),

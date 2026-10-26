@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clean::{CleanOutcome, CleanReport};
 use crate::fsutil;
-use crate::rules::{Action, home_dir};
+use crate::rules::home_dir;
 use crate::trash;
 
 // ---------------------------------------------------------------------------
@@ -384,36 +384,30 @@ fn validate_user_plist(agents_dir: &Path, raw: &str) -> Result<PathBuf, String> 
 
 fn remove_in(agents_dir: &Path, raw: &str, dry_run: bool) -> CleanReport {
     let category = Some("launch_agent".to_string());
+    let action = trash::preferred_action();
     let (bytes, result) = match validate_user_plist(agents_dir, raw) {
         Err(e) => (0, Err(e)),
         Ok(path) => {
             let bytes = fsutil::usage(&path).bytes;
             let result = if dry_run {
-                Ok(())
+                Ok(action)
             } else {
                 if let Some(info) = read_plist(&path) {
                     let _ = launchctl(&["bootout", &format!("{}/{}", gui_domain(), info.label)]);
                 }
-                trash::move_to_trash(&path)
+                trash::discard(&path, action)
             };
             (bytes, result)
         }
     };
     let ok = result.is_ok();
-    CleanReport {
-        dry_run,
-        trashed_bytes: if ok { bytes } else { 0 },
-        deleted_bytes: 0,
-        failed: u64::from(!ok),
-        outcomes: vec![CleanOutcome {
-            path: raw.to_string(),
-            category,
-            action: Some(Action::Trash),
-            bytes,
-            ok,
-            error: result.err(),
-        }],
+    let mut report = CleanReport::new(dry_run);
+    if ok {
+        report.add_removed(action, bytes);
     }
+    report.failed = u64::from(!ok);
+    report.outcomes.push(CleanOutcome { path: raw.to_string(), category, action: Some(action), bytes, ok, error: result.err() });
+    report
 }
 
 pub fn remove_launch_item(plist_path: &str, dry_run: bool) -> Result<CleanReport, String> {

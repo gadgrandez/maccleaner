@@ -875,7 +875,8 @@ fn orphans_in(roots: &Roots) -> Vec<OrphanGroup> {
 // ---------------------------------------------------------------------------
 // Validating and executing deletions
 
-type Remover<'a> = &'a dyn Fn(&Path) -> Result<(), String>;
+/// Removes an item; returns how (Trash or permanent deletion).
+type Remover<'a> = &'a dyn Fn(&Path) -> Result<Action, String>;
 
 /// Absolute path without `.` or `..`, with a parent and a name.
 fn plain_abs(raw: &str) -> Result<PathBuf, String> {
@@ -963,7 +964,7 @@ fn execute(checked: Vec<Checked>, dry_run: bool, gate_first: bool, remove: Remov
     let valid: Vec<PathBuf> = checked.iter().filter_map(|(_, v)| v.as_ref().ok().map(|(p, _)| p.clone())).collect();
     let _progress = progress::start(valid.len(), dry_run);
     let mut sizes = fsutil::usages(&valid).into_iter().map(|u| u.bytes);
-    let mut report = CleanReport { dry_run, trashed_bytes: 0, deleted_bytes: 0, failed: 0, outcomes: Vec::new() };
+    let mut report = CleanReport::new(dry_run);
     let mut gated = false;
     for (i, (raw, v)) in checked.into_iter().enumerate() {
         let outcome = match v {
@@ -973,17 +974,17 @@ fn execute(checked: Vec<Checked>, dry_run: bool, gate_first: bool, remove: Remov
                 let result = if gated {
                     Err("the app was not uninstalled".to_string())
                 } else if dry_run {
-                    Ok(())
+                    Ok(trash::preferred_action())
                 } else {
                     progress::step(&path, bytes, || remove(&path))
                 };
-                if result.is_ok() {
-                    report.trashed_bytes += bytes;
+                if let Ok(action) = result {
+                    report.add_removed(action, bytes);
                 }
                 CleanOutcome {
                     path: raw,
                     category: Some(category),
-                    action: Some(Action::Trash),
+                    action: Some(*result.as_ref().unwrap_or(&Action::Trash)),
                     bytes,
                     ok: result.is_ok(),
                     error: result.err(),
@@ -1008,7 +1009,7 @@ struct JobRemoval {
 }
 
 /// Removes all the jobs with a single authorization dialog; one result per job.
-type AdminRemover<'a> = &'a dyn Fn(&[JobRemoval]) -> Vec<Result<(), String>>;
+type AdminRemover<'a> = &'a dyn Fn(&[JobRemoval]) -> Vec<Result<Action, String>>;
 
 /// The orphan detection reports this system-wide job right now.
 fn orphan_job<'a>(installed: &'a Installed, raw: &str) -> Option<&'a JobFile> {
@@ -1043,7 +1044,7 @@ fn uninstall_in(roots: &Roots, req: &UninstallRequest, remove: Remover, admin: A
         };
         checked.push((raw.clone(), v));
     }
-    let admin_results: HashMap<PathBuf, Result<(), String>> = if req.dry_run || jobs.is_empty() {
+    let admin_results: HashMap<PathBuf, Result<Action, String>> = if req.dry_run || jobs.is_empty() {
         HashMap::new()
     } else {
         jobs.iter().map(|j| j.path.clone()).zip(admin(&jobs)).collect()
@@ -1064,34 +1065,39 @@ fn trash_destination(trash: &Path, path: &Path) -> PathBuf {
     trash.join(format!("{name} {secs}"))
 }
 
-/// Shell command that boots the job out of launchd and moves its file to the user's Trash.
-fn job_removal_script(job: &JobRemoval, dest: &Path, uid: u32) -> String {
+/// Shell command that boots the job out of launchd and moves its file to the user's Trash
+/// (`dest`), or deletes it when there is no destination.
+fn job_removal_script(job: &JobRemoval, dest: Option<&Path>, uid: u32) -> String {
     let target = match job.domain {
         JobDomain::System => format!("system/{}", job.label),
         JobDomain::User => format!("gui/{uid}/{}", job.label),
     };
     let src = sh_quote(&job.path.to_string_lossy());
-    let dest = sh_quote(&dest.to_string_lossy());
-    format!(
-        "/bin/launchctl bootout {} 2>/dev/null; /bin/mv -n {src} {dest} && [ ! -e {src} ] && /usr/sbin/chown -R {uid} {dest}",
-        sh_quote(&target)
-    )
+    let removal = match dest {
+        Some(dest) => {
+            let dest = sh_quote(&dest.to_string_lossy());
+            format!("/bin/mv -n {src} {dest} && [ ! -e {src} ] && /usr/sbin/chown -R {uid} {dest}")
+        }
+        None => format!("/bin/rm -rf {src}"),
+    };
+    format!("/bin/launchctl bootout {} 2>/dev/null; {removal}", sh_quote(&target))
 }
 
-fn remove_jobs_as_admin(home: &Path, jobs: &[JobRemoval]) -> Vec<Result<(), String>> {
+fn remove_jobs_as_admin(home: &Path, jobs: &[JobRemoval], action: Action) -> Vec<Result<Action, String>> {
     let uid = unsafe { libc::getuid() };
     let trash = home.join(".Trash");
     let tasks: Vec<(String, Vec<Vec<String>>)> = jobs
         .iter()
         .enumerate()
         .map(|(i, job)| {
-            let script = job_removal_script(job, &trash_destination(&trash, &job.path), uid);
+            let dest = (action == Action::Trash).then(|| trash_destination(&trash, &job.path));
+            let script = job_removal_script(job, dest.as_deref(), uid);
             (format!("job{i}"), vec![vec!["/bin/sh".to_string(), "-c".to_string(), script]])
         })
         .collect();
     performance::run_admin_tasks(&tasks)
         .into_iter()
-        .map(|r| if r.ok { Ok(()) } else { Err(r.error.unwrap_or(r.output)) })
+        .map(|r| if r.ok { Ok(action) } else { Err(r.error.unwrap_or(r.output)) })
         .collect()
 }
 
@@ -1187,7 +1193,8 @@ pub fn orphans() -> Result<Vec<OrphanGroup>, String> {
 
 pub fn uninstall(req: &UninstallRequest) -> Result<CleanReport, String> {
     let roots = Roots::real()?;
-    Ok(uninstall_in(&roots, req, &trash::move_to_trash, &|jobs| remove_jobs_as_admin(&roots.home, jobs)))
+    let action = trash::preferred_action();
+    Ok(uninstall_in(&roots, req, &|p| trash::discard(p, action), &|jobs| remove_jobs_as_admin(&roots.home, jobs, action)))
 }
 
 pub fn list_extensions() -> Result<Vec<ExtensionItem>, String> {
@@ -1195,7 +1202,8 @@ pub fn list_extensions() -> Result<Vec<ExtensionItem>, String> {
 }
 
 pub fn remove_extensions(req: &CleanRequest) -> Result<CleanReport, String> {
-    Ok(remove_extensions_in(&Roots::real()?, req, &trash::move_to_trash))
+    let action = trash::preferred_action();
+    Ok(remove_extensions_in(&Roots::real()?, req, &|p| trash::discard(p, action)))
 }
 
 #[cfg(test)]
@@ -1221,13 +1229,14 @@ mod tests {
         p.to_string_lossy().into_owned()
     }
 
-    fn no_admin(_: &[JobRemoval]) -> Vec<Result<(), String>> {
+    fn no_admin(_: &[JobRemoval]) -> Vec<Result<Action, String>> {
         panic!("unexpected administrator removal")
     }
 
-    fn fs_remove(p: &Path) -> Result<(), String> {
+    fn fs_remove(p: &Path) -> Result<Action, String> {
         let md = fs::symlink_metadata(p).map_err(|e| e.to_string())?;
-        if md.is_dir() { fs::remove_dir_all(p) } else { fs::remove_file(p) }.map_err(|e| e.to_string())
+        if md.is_dir() { fs::remove_dir_all(p) } else { fs::remove_file(p) }.map_err(|e| e.to_string())?;
+        Ok(Action::Trash)
     }
 
     fn fat_header(cputypes: &[u32]) -> Vec<u8> {
@@ -1827,7 +1836,7 @@ mod tests {
     #[test]
     fn job_removal_boots_out_and_moves_to_trash() {
         let job = JobRemoval { label: "com.gone.app.Agent".into(), path: "/Library/PrivilegedHelperTools/com.gone.app.Agent".into(), domain: JobDomain::System };
-        let script = job_removal_script(&job, Path::new("/Users/me/.Trash/com.gone.app.Agent"), 501);
+        let script = job_removal_script(&job, Some(Path::new("/Users/me/.Trash/com.gone.app.Agent")), 501);
         assert_eq!(
             script,
             "/bin/launchctl bootout system/com.gone.app.Agent 2>/dev/null; \
@@ -1835,8 +1844,12 @@ mod tests {
              && [ ! -e /Library/PrivilegedHelperTools/com.gone.app.Agent ] && /usr/sbin/chown -R 501 /Users/me/.Trash/com.gone.app.Agent"
         );
         let agent = JobRemoval { label: "a b".into(), path: "/Library/LaunchAgents/a b.plist".into(), domain: JobDomain::User };
-        let script = job_removal_script(&agent, Path::new("/t/a b.plist"), 501);
+        let script = job_removal_script(&agent, Some(Path::new("/t/a b.plist")), 501);
         assert!(script.starts_with("/bin/launchctl bootout 'gui/501/a b' 2>/dev/null; /bin/mv -n '/Library/LaunchAgents/a b.plist' '/t/a b.plist'"));
+        assert_eq!(
+            job_removal_script(&agent, None, 501),
+            "/bin/launchctl bootout 'gui/501/a b' 2>/dev/null; /bin/rm -rf '/Library/LaunchAgents/a b.plist'"
+        );
 
         let tmp = TempDir::new("apps-trash-dest");
         assert_eq!(trash_destination(tmp.path(), Path::new("/x/new")), tmp.path().join("new"));

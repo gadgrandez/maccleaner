@@ -24,7 +24,7 @@ enum Core {
         return String(decoding: try encoder.encode(value), as: UTF8.self)
     }
 
-    private static func decode<T: Decodable>(_ response: Response) throws -> T {
+    static func decode<T: Decodable>(_ response: Response) throws -> T {
         guard let response else { throw CoreError(message: loc("Empty response from the core")) }
         defer { mcl_string_free(response) }
         let decoder = JSONDecoder()

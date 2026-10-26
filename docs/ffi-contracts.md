@@ -5,8 +5,10 @@ Every function returns a `char *` with the JSON envelope `{"ok":bool,"data":...,
 Keys are `snake_case`; enums are `snake_case` strings. Sizes are in bytes allocated on disk
 (`fsutil::usage`/`fsutil::usages`). Dates are Unix seconds (`u64`).
 JSON requests with `dry_run` default it to `true`.
-Destructive actions move items to the Trash (`trash::move_to_trash`) and return
-`clean::CleanReport` (reuse the type; `category` may carry a free-form module id).
+Destructive actions remove items with `trash::discard(path, trash::preferred_action())` and return
+`clean::CleanReport` (reuse the type; `category` may carry a free-form module id). They move
+items to the Trash unless the app turned on permanent deletion with `mcl_set_delete_permanently(1)`;
+each outcome's `action` and the report's `trashed_bytes`/`deleted_bytes` say what was done.
 
 ## Applications (`apps`)
 

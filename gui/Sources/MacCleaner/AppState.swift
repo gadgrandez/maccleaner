@@ -26,6 +26,7 @@ final class AppState {
     /// `nil` until the first check.
     var fullDiskAccess: Bool?
     let alerts: Alerts
+    let preferences = Preferences()
     let scans = ScanCoordinator()
     let junk: JunkStore
     let dev: DevStore

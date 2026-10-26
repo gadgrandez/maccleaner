@@ -123,7 +123,15 @@ struct ContentView: View {
                 }
             }
             .listStyle(.sidebar)
-            .safeAreaInset(edge: .bottom) { DiskFooter(status: state.status.system) }
+            .safeAreaInset(edge: .bottom) {
+                VStack(alignment: .leading, spacing: 0) {
+                    SettingsLink { Label(loc("Settings"), systemImage: "gearshape") }
+                        .buttonStyle(.borderless)
+                        .padding(.horizontal, Space.l)
+                        .padding(.vertical, Space.s)
+                    DiskFooter(status: state.status.system)
+                }
+            }
             // Checked again when returning to the app (e.g. after granting the permission in Settings).
             .task { await state.refreshAccess() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

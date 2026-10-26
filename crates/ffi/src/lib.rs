@@ -11,7 +11,7 @@ use std::ffi::{CStr, CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 
-use maccleaner_core::{clean, governor, launchd, progress, rules, scan, space, state, system};
+use maccleaner_core::{clean, governor, launchd, progress, rules, scan, space, state, system, trash};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -80,6 +80,14 @@ pub unsafe extern "C" fn mcl_space(path: *const c_char, top: u32) -> *mut c_char
 #[unsafe(no_mangle)]
 pub extern "C" fn mcl_access_status() -> *mut c_char {
     respond(|| Ok(maccleaner_core::access::status()))
+}
+
+/// The user's preference: cleanups delete for good instead of moving to the Trash (off until
+/// the app sets it). -> the action now applied, `"trash"` or `"delete"`.
+#[unsafe(no_mangle)]
+pub extern "C" fn mcl_set_delete_permanently(on: i32) -> *mut c_char {
+    trash::set_delete_permanently(on != 0);
+    respond(|| Ok(trash::preferred_action()))
 }
 
 /// Progress of the cleanup in course (any module); polled while a cleanup call blocks.
@@ -160,6 +168,13 @@ mod tests {
         assert!(v["error"].is_string());
         let v = take(unsafe { mcl_space(std::ptr::null(), 5) });
         assert_eq!(v["ok"], false);
+    }
+
+    #[test]
+    fn delete_preference_is_reported() {
+        // Only the reply is checked: switching the preference would race with other tests.
+        let v = take(mcl_set_delete_permanently(0));
+        assert_eq!((v["ok"].as_bool(), v["data"].as_str()), (Some(true), Some("trash")));
     }
 
     #[test]

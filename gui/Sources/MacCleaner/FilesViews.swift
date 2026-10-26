@@ -337,20 +337,22 @@ struct LargeFilesView: View {
                     .padding(.horizontal, 24)
                     ActionBar {
                         if store.trashing {
-                            CleanProgressView(title: loc("Moving to the Trash…"))
+                            CleanProgressView(title: state.preferences.removingTitle)
                         } else {
                             Text(loc("\(countFiles(store.selection.count)) · \(formatBytes(store.selectedBytes))")).font(.headline).monospacedDigit()
                         }
                     } trailing: {
-                        Button { store.confirming = true } label: { Label(loc("Move to Trash"), systemImage: "trash") }
+                        Button { store.confirming = true } label: { Label(state.preferences.removeTitle, systemImage: "trash") }
                             .primaryActionStyle().controlSize(.large)
                             .disabled(store.selection.isEmpty || store.trashing)
                     }
                 }
             }
         }
-        .confirmationDialog(loc("Move \(countFiles(store.selection.count)) to the Trash?"), isPresented: $bindable.confirming) {
-            Button(loc("Move to Trash"), role: .destructive) { Task { await store.trash() } }
+        .confirmationDialog(state.preferences.deletePermanently
+                            ? loc("Delete \(countFiles(store.selection.count)) permanently?")
+                            : loc("Move \(countFiles(store.selection.count)) to the Trash?"), isPresented: $bindable.confirming) {
+            Button(state.preferences.removeTitle, role: .destructive) { Task { await store.trash() } }
         }
     }
 
@@ -474,20 +476,22 @@ struct DuplicatesView: View {
                     }
                     ActionBar {
                         if store.trashing {
-                            CleanProgressView(title: loc("Moving to the Trash…"))
+                            CleanProgressView(title: state.preferences.removingTitle)
                         } else {
                             Text(loc("\(countCopies(store.selection.count)) · \(formatBytes(store.selectedBytes))")).font(.headline).monospacedDigit()
                         }
                     } trailing: {
-                        Button { store.confirming = true } label: { Label(loc("Move to Trash"), systemImage: "trash") }
+                        Button { store.confirming = true } label: { Label(state.preferences.removeTitle, systemImage: "trash") }
                             .primaryActionStyle().controlSize(.large)
                             .disabled(store.selection.isEmpty || store.trashing)
                     }
                 }
             }
         }
-        .confirmationDialog(loc("Move \(countCopies(store.selection.count)) to the Trash?"), isPresented: $bindable.confirming) {
-            Button(loc("Move to Trash"), role: .destructive) { Task { await store.trash() } }
+        .confirmationDialog(state.preferences.deletePermanently
+                            ? loc("Delete \(countCopies(store.selection.count)) permanently?")
+                            : loc("Move \(countCopies(store.selection.count)) to the Trash?"), isPresented: $bindable.confirming) {
+            Button(state.preferences.removeTitle, role: .destructive) { Task { await store.trash() } }
         }
     }
 }

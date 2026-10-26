@@ -16,6 +16,9 @@ const char *mcl_version(void);
 char *mcl_scan(void);
 /* request_json: {"paths":["/abs/path",...],"dry_run":bool}; dry_run defaults to true. */
 char *mcl_clean(const char *request_json);
+/* on != 0: every cleanup deletes for good instead of moving to the Trash (default off).
+   -> "trash" | "delete" */
+char *mcl_set_delete_permanently(int on);
 /* Progress of the cleanup in course, from any module:
    {"active":bool,"done":u64,"total":u64 (0 = unknown),"bytes":u64,"current":string|null} */
 char *mcl_clean_progress(void);

@@ -155,9 +155,13 @@ struct UninstallerView: View {
         }
         .task { await store.load() }
         .confirmationDialog(loc("Uninstall \(store.selectedApp?.name ?? "")?"), isPresented: $bindable.confirming) {
-            Button(loc("Move to Trash (\(formatBytes(store.uninstallBytes)))"), role: .destructive) { Task { await store.uninstall() } }
+            Button(state.preferences.deletePermanently
+                   ? loc("Delete Permanently (\(formatBytes(store.uninstallBytes)))")
+                   : loc("Move to Trash (\(formatBytes(store.uninstallBytes)))"), role: .destructive) { Task { await store.uninstall() } }
         } message: {
-            Text(loc("The app and the selected leftovers will go to the Trash."))
+            Text(state.preferences.deletePermanently
+                 ? loc("The app and the selected leftovers will be deleted permanently.")
+                 : loc("The app and the selected leftovers will go to the Trash."))
         }
     }
 

@@ -25,6 +25,11 @@ extension Core {
         try await call(request: PathsRequest(paths: paths, dryRun: false)) { mcl_clean($0) }
     }
 
+    /// Cleanups delete for good instead of moving to the Trash (instant, so called inline).
+    static func setDeletePermanently(_ on: Bool) {
+        let _: String? = try? decode(mcl_set_delete_permanently(on ? 1 : 0))
+    }
+
     /// Progress of the cleanup in course, whichever module started it.
     static func cleanProgress() async throws -> CleanProgress { try await call { mcl_clean_progress() } }
 
