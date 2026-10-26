@@ -372,3 +372,13 @@
 "Checks caches, logs, Xcode and simulator data, Mail downloads and more. Everything is deleted permanently." = "Revisa cachés, registros, datos de Xcode y simuladores, descargas de Mail y más. Todo se elimina definitivamente.";
 "Done: %@ deleted" = "Listo: %@ eliminados";
 "The space is already free. The rest of the recommendations are below." = "El espacio ya está libre. El resto de recomendaciones está abajo.";
+
+/* Menu bar monitor */
+"CPU %@" = "CPU %@";
+"Memory pressure: %@" = "Presión de memoria: %@";
+"Open MacCleaner" = "Abrir MacCleaner";
+"Quit MacCleaner" = "Salir de MacCleaner";
+"load %@" = "carga %@";
+"Menu bar" = "Barra de menús";
+"Show the resource monitor in the menu bar" = "Mostrar el monitor de recursos en la barra de menús";
+"CPU, memory, disk and swap at a glance while MacCleaner is open." = "CPU, memoria, disco y swap de un vistazo mientras MacCleaner está abierto.";

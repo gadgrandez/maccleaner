@@ -27,6 +27,7 @@ final class AppState {
     var fullDiskAccess: Bool?
     let alerts: Alerts
     let preferences = Preferences()
+    let menuBar = MenuBarStore()
     let scans = ScanCoordinator()
     let junk: JunkStore
     let dev: DevStore
@@ -61,6 +62,7 @@ final class AppState {
         duplicates = DuplicatesStore(alerts: alerts, scans: scans)
         smartCare = SmartCareStore()
         smartCare.attach(self)
+        Task { [menuBar, preferences] in await menuBar.run { preferences.showInMenuBar } }
     }
 
     func refreshAccess() async {

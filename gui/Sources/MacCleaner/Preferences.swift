@@ -7,6 +7,7 @@ import SwiftUI
 @Observable
 final class Preferences {
     private static let deletePermanentlyKey = "deletePermanently"
+    private static let showInMenuBarKey = "showInMenuBar"
 
     /// Cleanups delete for good instead of moving to the Trash. Off by default.
     var deletePermanently: Bool {
@@ -16,7 +17,13 @@ final class Preferences {
         }
     }
 
+    /// Resource monitor in the menu bar. On by default.
+    var showInMenuBar: Bool {
+        didSet { UserDefaults.standard.set(showInMenuBar, forKey: Self.showInMenuBarKey) }
+    }
+
     init() {
+        showInMenuBar = UserDefaults.standard.object(forKey: Self.showInMenuBarKey) as? Bool ?? true
         deletePermanently = UserDefaults.standard.bool(forKey: Self.deletePermanentlyKey)
         Core.setDeletePermanently(deletePermanently)
     }
@@ -39,6 +46,13 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section(loc("Menu bar")) {
+                Toggle(isOn: Binding(get: { preferences.showInMenuBar }, set: { preferences.showInMenuBar = $0 })) {
+                    Text(loc("Show the resource monitor in the menu bar"))
+                    Text(loc("CPU, memory, disk and swap at a glance while MacCleaner is open."))
+                }
+                .toggleStyle(.switch)
+            }
             Section(loc("Cleanup")) {
                 Toggle(isOn: Binding(
                     get: { preferences.deletePermanently },

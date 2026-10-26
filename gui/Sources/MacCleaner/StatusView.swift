@@ -90,8 +90,8 @@ struct StatusView: View {
         return HStack(spacing: 14) {
             RingCard(title: loc("Disk"), value: "\(formatBytes(s.diskAvailable))", caption: loc("free of \(formatBytes(s.diskTotal))"),
                      fraction: diskFrac, colors: diskFrac > 0.9 ? [.red, .orange] : [.teal, .blue])
-            RingCard(title: loc("Memory"), value: formatBytes(s.memUsed), caption: loc("of \(formatBytes(s.memTotal)) · \(pressureText(s.pressure)) pressure"),
-                     fraction: memFrac, colors: pressureColors(s.pressure))
+            RingCard(title: loc("Memory"), value: formatBytes(s.memUsed), caption: loc("of \(formatBytes(s.memTotal)) · \(s.pressure.title) pressure"),
+                     fraction: memFrac, colors: s.pressure.colors)
             RingCard(title: loc("Swap"), value: formatBytes(s.swapUsed), caption: loc("of \(formatBytes(s.swapTotal))"),
                      fraction: swapFrac, colors: swapFrac > 0.75 ? [.orange, .red] : [.indigo, .purple])
             RingCard(title: loc("CPU"), value: String(format: "%.2f", s.load.first ?? 0), caption: locCount(s.cpuCount, one: { loc("load average · \($0) core") }, other: { loc("load average · \($0) cores") }),
@@ -145,9 +145,11 @@ struct StatusView: View {
             }
         }
     }
+}
 
-    private func pressureText(_ p: Pressure) -> String {
-        switch p {
+extension Pressure {
+    var title: String {
+        switch self {
         case .normal: loc("normal")
         case .warning: loc("elevated")
         case .critical: loc("critical")
@@ -155,8 +157,8 @@ struct StatusView: View {
         }
     }
 
-    private func pressureColors(_ p: Pressure) -> [Color] {
-        switch p {
+    var colors: [Color] {
+        switch self {
         case .normal, .unknown: [.green, .teal]
         case .warning: [.yellow, .orange]
         case .critical: [.red, .orange]

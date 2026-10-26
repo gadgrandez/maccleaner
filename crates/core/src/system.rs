@@ -32,6 +32,9 @@ pub struct SystemStatus {
     pub pressure: Pressure,
     pub load: [f64; 3],
     pub cpu_count: u32,
+    /// Cumulative CPU ticks of all cores: user, system, idle, nice. The usage between two
+    /// readings is the share of non-idle ticks in their difference.
+    pub cpu_ticks: [u64; 4],
 }
 
 fn sysctl<T: Copy>(name: &str) -> Option<T> {
@@ -84,9 +87,11 @@ struct VmStatistics64 {
 }
 
 const HOST_VM_INFO64: i32 = 4;
+const HOST_CPU_LOAD_INFO: i32 = 3;
 
 unsafe extern "C" {
     fn mach_host_self() -> u32;
+    fn host_statistics(host: u32, flavor: i32, info: *mut i32, count: *mut u32) -> i32;
     fn host_statistics64(host: u32, flavor: i32, info: *mut i32, count: *mut u32) -> i32;
 }
 
@@ -100,6 +105,13 @@ fn vm_stats() -> Option<VmStatistics64> {
     let mut count = (std::mem::size_of::<VmStatistics64>() / std::mem::size_of::<i32>()) as u32;
     let rc = unsafe { host_statistics64(host_port(), HOST_VM_INFO64, (&mut stats as *mut VmStatistics64).cast(), &mut count) };
     (rc == 0).then_some(stats)
+}
+
+fn cpu_ticks() -> [u64; 4] {
+    let mut ticks = [0u32; 4];
+    let mut count = ticks.len() as u32;
+    let rc = unsafe { host_statistics(host_port(), HOST_CPU_LOAD_INFO, ticks.as_mut_ptr().cast(), &mut count) };
+    if rc == 0 { ticks.map(u64::from) } else { [0; 4] }
 }
 
 fn disk(path: &str) -> (u64, u64) {
@@ -168,6 +180,7 @@ pub fn status() -> SystemStatus {
         pressure,
         load,
         cpu_count: sysctl::<i32>("hw.logicalcpu").unwrap_or(0).max(0) as u32,
+        cpu_ticks: cpu_ticks(),
     }
 }
 
@@ -188,5 +201,6 @@ mod tests {
         assert!(s.disk_total > 0 && s.disk_available <= s.disk_total);
         assert!(s.cpu_count > 0);
         assert_ne!(s.pressure, Pressure::Unknown);
+        assert!(s.cpu_ticks.iter().sum::<u64>() > 0);
     }
 }

@@ -15,11 +15,14 @@ enum Entry {
 }
 
 struct MacCleanerApp: App {
+    static let mainWindow = "main"
+
     // No @State: in the macOS 27 SDK it is a macro that Command Line Tools doesn't ship.
     private let state = AppState()
 
     var body: some Scene {
-        WindowGroup("MacCleaner") {
+        // A single window: reopening it from the menu bar brings it back instead of adding another.
+        Window("MacCleaner", id: Self.mainWindow) {
             ContentView()
                 .environment(state)
                 .task { DebugSnapshot.install(state) }
@@ -31,5 +34,13 @@ struct MacCleanerApp: App {
         Settings {
             SettingsView(preferences: state.preferences)
         }
+
+        MenuBarExtra(isInserted: Binding(get: { state.preferences.showInMenuBar },
+                                         set: { state.preferences.showInMenuBar = $0 })) {
+            MenuBarPanel(store: state.menuBar)
+        } label: {
+            MenuBarLabel(store: state.menuBar)
+        }
+        .menuBarExtraStyle(.window)
     }
 }

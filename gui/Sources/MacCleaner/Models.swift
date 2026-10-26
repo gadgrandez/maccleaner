@@ -82,6 +82,8 @@ struct SystemStatus: Codable, Sendable {
     let pressure: Pressure
     let load: [Double]
     let cpuCount: UInt32
+    /// Cumulative ticks of all cores: user, system, idle, nice.
+    let cpuTicks: [UInt64]
 }
 
 struct MonitorStatus: Codable, Sendable {
