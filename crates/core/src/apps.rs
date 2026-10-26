@@ -117,6 +117,16 @@ pub enum ExtensionKind {
     ScreenSaver,
     Services,
     MailBundle,
+    /// Audio device driver (`Audio/Plug-Ins/HAL`): virtual microphones and outputs.
+    AudioDriver,
+    /// Legacy camera plugin (`CoreMediaIO/Plug-Ins/DAL`).
+    CameraPlugin,
+    /// Camera system extension (virtual cameras).
+    CameraExtension,
+    /// Driver system extension (`.dext`).
+    DriverExtension,
+    /// Any other system extension (network filters, endpoint security...).
+    SystemExtension,
 }
 
 impl ExtensionKind {
@@ -129,6 +139,11 @@ impl ExtensionKind {
             Self::ScreenSaver => "screen_saver",
             Self::Services => "services",
             Self::MailBundle => "mail_bundle",
+            Self::AudioDriver => "audio_driver",
+            Self::CameraPlugin => "camera_plugin",
+            Self::CameraExtension => "camera_extension",
+            Self::DriverExtension => "driver_extension",
+            Self::SystemExtension => "system_extension",
         }
     }
 }
@@ -148,6 +163,12 @@ pub struct ExtensionItem {
     pub scope: ExtensionScope,
     pub bytes: u64,
     pub removable: bool,
+    /// App that installed it (system extensions).
+    #[serde(default)]
+    pub origin: Option<String>,
+    /// The app that installed it is gone, but the extension or driver is still loaded.
+    #[serde(default)]
+    pub orphan: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +194,8 @@ struct Roots {
     system_applications: PathBuf,
     /// `/Library` (system-wide extensions, installed agents and helpers).
     library: PathBuf,
+    /// The item was installed by an installer package (it has a receipt).
+    packaged: fn(&Path) -> bool,
 }
 
 impl Roots {
@@ -183,6 +206,7 @@ impl Roots {
             applications: "/Applications".into(),
             system_applications: "/System/Applications".into(),
             library: "/Library".into(),
+            packaged: has_receipt,
         })
     }
 
@@ -594,21 +618,85 @@ fn app_groups(roots: &Roots, skip: Option<&Path>) -> HashSet<String> {
 }
 
 /// Ids of installed apps and their inner bundles, plus active system and driver extensions
-/// (they outlive the app that installed them and still use its containers).
+/// (they outlive the app that installed them and still use its containers), except those whose
+/// app is gone.
 fn app_ids(roots: &Roots) -> HashSet<String> {
     let mut ids = HashSet::new();
     for (app, _) in app_bundles(roots) {
         bundle_ids(&app, &mut ids);
     }
+    let orphaned: HashSet<String> =
+        system_extensions(roots, &ids).into_iter().filter(|e| e.orphan).map(|e| e.id.to_lowercase()).collect();
     for dir in real_dirs(&roots.library.join("SystemExtensions")) {
         for (name, _) in entries(&dir) {
             let lower = name.to_lowercase();
             if let Some(id) = lower.strip_suffix(".systemextension").or_else(|| lower.strip_suffix(".dext")) {
-                ids.insert(id.to_owned());
+                if !orphaned.contains(id) {
+                    ids.insert(id.to_owned());
+                }
             }
         }
     }
     ids
+}
+
+/// A system or driver extension registered with macOS.
+#[derive(Debug, Clone)]
+struct SystemExtension {
+    id: String,
+    /// Staged copy in `/Library/SystemExtensions/<uuid>/`.
+    path: PathBuf,
+    kind: ExtensionKind,
+    /// App the extension was activated from.
+    origin: Option<PathBuf>,
+    /// Its app is no longer there (nor installed elsewhere).
+    orphan: bool,
+}
+
+/// Active extensions in `/Library/SystemExtensions/db.plist` (readable without privileges).
+/// `app_ids`: ids of installed apps and their inner bundles, in case the app was moved.
+fn system_extensions(roots: &Roots, app_ids: &HashSet<String>) -> Vec<SystemExtension> {
+    let dir = roots.library.join("SystemExtensions");
+    let list = plist::Value::from_file(dir.join("db.plist"))
+        .ok()
+        .and_then(|v| v.into_dictionary())
+        .and_then(|mut d| d.remove("extensions"))
+        .and_then(|v| v.into_array())
+        .unwrap_or_default();
+    list.into_iter()
+        .filter_map(|v| {
+            let d = v.into_dictionary()?;
+            if !dict_str(&d, "state")?.starts_with("activated") {
+                return None;
+            }
+            let id = dict_str(&d, "identifier")?;
+            let unique = dict_str(&d, "uniqueID").filter(|u| !u.contains('/') && !u.starts_with('.'))?;
+            let (_, path) = entries(&dir.join(unique)).into_iter().next()?;
+            let category = |c: &str| {
+                d.get("categories").and_then(|v| v.as_array()).is_some_and(|a| a.iter().any(|v| v.as_string() == Some(c)))
+            };
+            let kind = if category("com.apple.system_extension.cmio") {
+                ExtensionKind::CameraExtension
+            } else if category("com.apple.system_extension.driver_extension") {
+                ExtensionKind::DriverExtension
+            } else {
+                ExtensionKind::SystemExtension
+            };
+            let origin = dict_str(&d, "originPath")
+                .and_then(|p| Path::new(&p).ancestors().filter(|a| is_app(a)).last().map(Path::to_path_buf));
+            let orphan = origin.as_ref().is_some_and(|a| !a.exists()) && !app_ids.contains(&id.to_lowercase());
+            Some(SystemExtension { id, path, kind, origin, orphan })
+        })
+        .collect()
+}
+
+/// `pkgutil` knows which installer package placed `path`.
+fn has_receipt(path: &Path) -> bool {
+    std::process::Command::new("/usr/sbin/pkgutil")
+        .arg("--file-info")
+        .arg(path)
+        .output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l.starts_with("pkgid:")))
 }
 
 /// Ids (lowercase) of the apps installed in the usual folders and of their inner bundles.
@@ -1072,28 +1160,52 @@ fn job_removal_script(job: &JobRemoval, dest: Option<&Path>, uid: u32) -> String
         JobDomain::System => format!("system/{}", job.label),
         JobDomain::User => format!("gui/{uid}/{}", job.label),
     };
-    let src = sh_quote(&job.path.to_string_lossy());
-    let removal = match dest {
+    format!("/bin/launchctl bootout {} 2>/dev/null; {}", sh_quote(&target), removal_command(&job.path, dest, uid))
+}
+
+/// Moves `path` to the user's Trash (`dest`), handing it over to the user, or deletes it.
+fn removal_command(path: &Path, dest: Option<&Path>, uid: u32) -> String {
+    let src = sh_quote(&path.to_string_lossy());
+    match dest {
         Some(dest) => {
             let dest = sh_quote(&dest.to_string_lossy());
             format!("/bin/mv -n {src} {dest} && [ ! -e {src} ] && /usr/sbin/chown -R {uid} {dest}")
         }
         None => format!("/bin/rm -rf {src}"),
-    };
-    format!("/bin/launchctl bootout {} 2>/dev/null; {removal}", sh_quote(&target))
+    }
 }
 
 fn remove_jobs_as_admin(home: &Path, jobs: &[JobRemoval], action: Action) -> Vec<Result<Action, String>> {
     let uid = unsafe { libc::getuid() };
     let trash = home.join(".Trash");
-    let tasks: Vec<(String, Vec<Vec<String>>)> = jobs
-        .iter()
+    let scripts = jobs.iter().map(|job| {
+        let dest = (action == Action::Trash).then(|| trash_destination(&trash, &job.path));
+        job_removal_script(job, dest.as_deref(), uid)
+    });
+    run_admin_scripts(scripts, action)
+}
+
+/// System audio drivers and camera plugins. Core Audio is restarted so that a removed driver's
+/// devices disappear right away; camera plugins go away when the apps using them restart.
+fn remove_plugins_as_admin(home: &Path, plugins: &[(PathBuf, ExtensionKind)], action: Action) -> Vec<Result<Action, String>> {
+    let uid = unsafe { libc::getuid() };
+    let trash = home.join(".Trash");
+    let scripts = plugins.iter().map(|(path, kind)| {
+        let dest = (action == Action::Trash).then(|| trash_destination(&trash, path));
+        let removal = removal_command(path, dest.as_deref(), uid);
+        match kind {
+            ExtensionKind::AudioDriver => format!("{removal} && {{ /usr/bin/killall coreaudiod 2>/dev/null; true; }}"),
+            _ => removal,
+        }
+    });
+    run_admin_scripts(scripts, action)
+}
+
+/// Runs the scripts with a single authorization dialog; one result per script.
+fn run_admin_scripts(scripts: impl Iterator<Item = String>, action: Action) -> Vec<Result<Action, String>> {
+    let tasks: Vec<(String, Vec<Vec<String>>)> = scripts
         .enumerate()
-        .map(|(i, job)| {
-            let dest = (action == Action::Trash).then(|| trash_destination(&trash, &job.path));
-            let script = job_removal_script(job, dest.as_deref(), uid);
-            (format!("job{i}"), vec![vec!["/bin/sh".to_string(), "-c".to_string(), script]])
-        })
+        .map(|(i, script)| (format!("item{i}"), vec![vec!["/bin/sh".to_string(), "-c".to_string(), script]]))
         .collect();
     performance::run_admin_tasks(&tasks)
         .into_iter()
@@ -1113,7 +1225,26 @@ const EXTENSION_DIRS: &[(&str, Option<&str>, ExtensionKind)] = &[
     ("Screen Savers", Some("saver"), ExtensionKind::ScreenSaver),
     ("Services", Some("workflow"), ExtensionKind::Services),
     ("Mail/Bundles", Some("mailbundle"), ExtensionKind::MailBundle),
+    ("Audio/Plug-Ins/HAL", Some("driver"), ExtensionKind::AudioDriver),
+    ("CoreMediaIO/Plug-Ins/DAL", Some("plugin"), ExtensionKind::CameraPlugin),
 ];
+
+/// Device drivers loaded by system services: system-wide ones are removed as administrator, and
+/// those whose app is gone (and that no installer package placed) are reported as orphans.
+fn is_device_plugin(kind: ExtensionKind) -> bool {
+    matches!(kind, ExtensionKind::AudioDriver | ExtensionKind::CameraPlugin)
+}
+
+/// Display name of a bundle, unless it is just its id.
+fn bundle_name(path: &Path) -> Option<String> {
+    info_plist(path)
+        .and_then(|d| dict_str(&d, "CFBundleDisplayName").or_else(|| dict_str(&d, "CFBundleName")))
+        .filter(|n| !is_reverse_dns(n))
+}
+
+fn app_name(app: &Path) -> Option<String> {
+    app.file_stem().map(|s| s.to_string_lossy().into_owned())
+}
 
 fn ext_matches(path: &Path, ext: Option<&str>) -> bool {
     match ext {
@@ -1123,12 +1254,24 @@ fn ext_matches(path: &Path, ext: Option<&str>) -> bool {
 }
 
 fn list_extensions_in(roots: &Roots) -> Vec<ExtensionItem> {
+    let ids = app_ids(roots);
+    let vendors: HashSet<String> =
+        ids.iter().filter(|i| is_reverse_dns(i)).filter_map(|i| vendor(i).map(str::to_owned)).collect();
     let mut items = Vec::new();
     for (library, scope) in [(roots.user_library(), ExtensionScope::User), (roots.library.clone(), ExtensionScope::System)] {
         for (dir, ext, kind) in EXTENSION_DIRS {
             for (name, path) in entries(&library.join(dir)) {
                 if !ext_matches(&path, *ext) {
                     continue;
+                }
+                let mut orphan = false;
+                if is_device_plugin(*kind) {
+                    let id = info_plist(&path).and_then(|d| dict_str(&d, "CFBundleIdentifier")).unwrap_or_default();
+                    // macOS's own drivers are part of the system.
+                    if id.to_lowercase().starts_with("com.apple.") {
+                        continue;
+                    }
+                    orphan = is_orphan(&id, &ids, &vendors) && !(roots.packaged)(&path);
                 }
                 let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or(name);
                 items.push(ExtensionItem {
@@ -1137,10 +1280,30 @@ fn list_extensions_in(roots: &Roots) -> Vec<ExtensionItem> {
                     kind: *kind,
                     scope,
                     bytes: 0,
-                    removable: scope == ExtensionScope::User,
+                    removable: scope == ExtensionScope::User || is_device_plugin(*kind),
+                    origin: None,
+                    orphan,
                 });
             }
         }
+    }
+    // Only macOS deactivates system extensions (Login Items & Extensions in System Settings).
+    let mut app_only = HashSet::new();
+    for (app, _) in app_bundles(roots) {
+        bundle_ids(&app, &mut app_only);
+    }
+    for ext in system_extensions(roots, &app_only) {
+        let origin = ext.origin.as_deref().and_then(app_name);
+        items.push(ExtensionItem {
+            name: bundle_name(&ext.path).or_else(|| origin.clone()).unwrap_or_else(|| ext.id.clone()),
+            path: ext.path.to_string_lossy().into_owned(),
+            kind: ext.kind,
+            scope: ExtensionScope::System,
+            bytes: 0,
+            removable: false,
+            origin,
+            orphan: ext.orphan,
+        });
     }
     let paths: Vec<PathBuf> = items.iter().map(|i| PathBuf::from(&i.path)).collect();
     for (item, u) in items.iter_mut().zip(fsutil::usages(&paths)) {
@@ -1150,30 +1313,61 @@ fn list_extensions_in(roots: &Roots) -> Vec<ExtensionItem> {
     items
 }
 
-/// Deletable extension: direct child of a user extensions folder, with its file extension.
-fn validate_extension(roots: &Roots, raw: &str) -> Result<(PathBuf, ExtensionKind), String> {
+/// Deletable extension: direct child of a user extensions folder, or of a system device driver
+/// folder (removed as administrator: the flag), with its file extension.
+fn validate_extension(roots: &Roots, raw: &str) -> Result<(PathBuf, ExtensionKind, bool), String> {
     let path = plain_abs(raw)?;
     let parent = canon_parent(&path)?;
-    let library = roots.user_library();
-    let (ext, kind) = EXTENSION_DIRS
+    let in_dir = |library: &Path, d: &str| fs::canonicalize(library.join(d)).is_ok_and(|c| c == parent);
+    let user = roots.user_library();
+    let (ext, kind, admin) = EXTENSION_DIRS
         .iter()
-        .find(|(d, _, _)| fs::canonicalize(library.join(d)).is_ok_and(|c| c == parent))
-        .map(|(_, ext, kind)| (*ext, *kind))
-        .ok_or_else(|| "outside the user extension folders".to_string())?;
+        .find_map(|(d, ext, kind)| {
+            if in_dir(&user, d) {
+                Some((*ext, *kind, false))
+            } else if is_device_plugin(*kind) && in_dir(&roots.library, d) {
+                Some((*ext, *kind, true))
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| "outside the extension folders".to_string())?;
     if is_hidden(&path) || !ext_matches(&path, ext) {
         return Err("not an extension of this kind".into());
     }
+    let id = info_plist(&path).and_then(|d| dict_str(&d, "CFBundleIdentifier")).unwrap_or_default();
+    if admin && id.to_lowercase().starts_with("com.apple.") {
+        return Err("protected system item".into());
+    }
     fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-    Ok((path, kind))
+    Ok((path, kind, admin))
 }
 
-fn remove_extensions_in(roots: &Roots, req: &CleanRequest, remove: Remover) -> CleanReport {
+/// Removes system device drivers with a single authorization dialog; one result per driver.
+type PluginRemover<'a> = &'a dyn Fn(&[(PathBuf, ExtensionKind)]) -> Vec<Result<Action, String>>;
+
+fn remove_extensions_in(roots: &Roots, req: &CleanRequest, remove: Remover, admin: PluginRemover) -> CleanReport {
+    let mut plugins = Vec::new();
     let checked = req
         .paths
         .iter()
-        .map(|raw| (raw.clone(), validate_extension(roots, raw).map(|(p, k)| (p, k.as_str().to_string()))))
+        .map(|raw| {
+            let v = validate_extension(roots, raw).map(|(p, kind, as_admin)| {
+                if as_admin {
+                    plugins.push((p.clone(), kind));
+                }
+                (p, kind.as_str().to_string())
+            });
+            (raw.clone(), v)
+        })
         .collect();
-    execute(checked, req.dry_run, false, remove)
+    let admin_results: HashMap<PathBuf, Result<Action, String>> = if req.dry_run || plugins.is_empty() {
+        HashMap::new()
+    } else {
+        plugins.iter().map(|(p, _)| p.clone()).zip(admin(&plugins)).collect()
+    };
+    let remover = |p: &Path| admin_results.get(p).cloned().unwrap_or_else(|| remove(p));
+    execute(checked, req.dry_run, false, &remover)
 }
 
 // ---------------------------------------------------------------------------
@@ -1202,8 +1396,11 @@ pub fn list_extensions() -> Result<Vec<ExtensionItem>, String> {
 }
 
 pub fn remove_extensions(req: &CleanRequest) -> Result<CleanReport, String> {
+    let roots = Roots::real()?;
     let action = trash::preferred_action();
-    Ok(remove_extensions_in(&Roots::real()?, req, &|p| trash::discard(p, action)))
+    Ok(remove_extensions_in(&roots, req, &|p| trash::discard(p, action), &|plugins| {
+        remove_plugins_as_admin(&roots.home, plugins, action)
+    }))
 }
 
 #[cfg(test)]
@@ -1218,6 +1415,7 @@ mod tests {
             applications: base.join("Applications"),
             system_applications: base.join("System/Applications"),
             library: base.join("Library"),
+            packaged: |p| p.to_string_lossy().contains("Packaged"),
         };
         for d in [&r.home, &r.applications, &r.system_applications, &r.library] {
             fs::create_dir_all(d).unwrap();
@@ -1230,6 +1428,10 @@ mod tests {
     }
 
     fn no_admin(_: &[JobRemoval]) -> Vec<Result<Action, String>> {
+        panic!("unexpected administrator removal")
+    }
+
+    fn no_plugins(_: &[(PathBuf, ExtensionKind)]) -> Vec<Result<Action, String>> {
         panic!("unexpected administrator removal")
     }
 
@@ -1603,11 +1805,104 @@ mod tests {
             ],
             dry_run: false,
         };
-        let rep = remove_extensions_in(&r, &req, &fs_remove);
+        let rep = remove_extensions_in(&r, &req, &fs_remove, &no_plugins);
         assert_eq!(rep.failed, 4, "{:?}", rep.outcomes);
         assert_eq!(rep.outcomes[4].category.as_deref(), Some("preference_pane"));
         assert!(!user_pane.exists() && !user_ql.exists());
         assert!(sys_md.exists() && lib.join("QuickLook/notes.txt").exists());
+    }
+
+    /// Registers a staged system extension in `db.plist`, activated from `origin`.
+    fn stage_extension(r: &Roots, exts: &[(&str, &str, &str, &Path)]) {
+        let dir = r.library.join("SystemExtensions");
+        let mut list = Vec::new();
+        for (uuid, id, category, origin) in exts {
+            let bundle = dir.join(uuid).join(format!("{id}.systemextension"));
+            fs::create_dir_all(bundle.join("Contents")).unwrap();
+            let mut info = plist::Dictionary::new();
+            info.insert("CFBundleDisplayName".into(), "Camera Extension".into());
+            info.insert("CFBundleName".into(), (*id).into());
+            plist::Value::Dictionary(info).to_file_xml(bundle.join("Contents/Info.plist")).unwrap();
+            let mut d = plist::Dictionary::new();
+            d.insert("identifier".into(), (*id).into());
+            d.insert("uniqueID".into(), (*uuid).into());
+            d.insert("state".into(), "activated_enabled".into());
+            d.insert("categories".into(), plist::Value::Array(vec![(*category).into()]));
+            let from = origin.join(format!("Contents/Library/SystemExtensions/{id}.systemextension"));
+            d.insert("originPath".into(), s(&from).into());
+            list.push(plist::Value::Dictionary(d));
+        }
+        let mut db = plist::Dictionary::new();
+        db.insert("extensions".into(), plist::Value::Array(list));
+        plist::Value::Dictionary(db).to_file_binary(dir.join("db.plist")).unwrap();
+    }
+
+    fn make_plugin(dir: &Path, file: &str, id: &str) -> PathBuf {
+        let p = dir.join(file);
+        fs::create_dir_all(p.join("Contents")).unwrap();
+        let mut d = plist::Dictionary::new();
+        d.insert("CFBundleIdentifier".into(), id.into());
+        plist::Value::Dictionary(d).to_file_xml(p.join("Contents/Info.plist")).unwrap();
+        p
+    }
+
+    #[test]
+    fn extensions_and_drivers_left_by_removed_apps_are_orphans() {
+        let tmp = TempDir::new("apps-sysext");
+        let r = roots(&tmp);
+        let kept = make_app(&r.applications, "Mi", &[("CFBundleIdentifier", "com.mi.connect")], false, b"");
+        let gone = r.applications.join("Virtual Cam.app");
+        stage_extension(&r, &[
+            ("5DA9", "com.cam.maker.avextension", "com.apple.system_extension.cmio", &gone),
+            ("35C1", "com.mi.camera", "com.apple.system_extension.cmio", &kept),
+            ("0B0E", "cn.wch.serial", "com.apple.system_extension.driver_extension", &r.applications.join("Serial.app")),
+        ]);
+        let hal = r.library.join("Audio/Plug-Ins/HAL");
+        let cam_audio = make_plugin(&hal, "CamAudio.driver", "com.cam.maker.AudioDriver");
+        make_plugin(&hal, "Packaged.driver", "com.blackhole.driver");
+        make_plugin(&hal, "Parrot.driver", "com.apple.audio.Parrot");
+        make_plugin(&r.library.join("CoreMediaIO/Plug-Ins/DAL"), "Old.plugin", "com.mi.dal");
+        touch(&r.library.join("CoreMediaIO/Plug-Ins/DAL/plugins-info.txt"), 1);
+        touch(&r.user_library().join("Application Support/com.cam.maker.avextension/x"), 10);
+
+        let items = list_extensions_in(&r);
+        let summary: Vec<(&str, ExtensionKind, bool, bool, Option<&str>)> =
+            items.iter().map(|i| (i.name.as_str(), i.kind, i.removable, i.orphan, i.origin.as_deref())).collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("CamAudio", ExtensionKind::AudioDriver, true, true, None),
+                ("Camera Extension", ExtensionKind::DriverExtension, false, true, Some("Serial")),
+                ("Camera Extension", ExtensionKind::CameraExtension, false, false, Some("Mi")),
+                ("Camera Extension", ExtensionKind::CameraExtension, false, true, Some("Virtual Cam")),
+                ("Old", ExtensionKind::CameraPlugin, true, false, None),
+                ("Packaged", ExtensionKind::AudioDriver, true, false, None),
+            ]
+        );
+        // With its extension orphaned, the vendor's data is an orphan too.
+        let ids: Vec<String> = orphans_in(&r).into_iter().map(|g| g.id).collect();
+        assert_eq!(ids, vec!["com.cam.maker.avextension"]);
+
+        let removed = std::cell::RefCell::new(Vec::new());
+        let admin = |plugins: &[(PathBuf, ExtensionKind)]| {
+            removed.borrow_mut().extend(plugins.iter().cloned());
+            plugins.iter().map(|_| Ok(Action::Trash)).collect()
+        };
+        let staged = items.iter().find(|i| i.kind == ExtensionKind::DriverExtension).unwrap().path.clone();
+        let req = CleanRequest {
+            paths: vec![s(&cam_audio), s(&hal.join("Parrot.driver")), staged],
+            dry_run: false,
+        };
+        let rep = remove_extensions_in(&r, &req, &fs_remove, &admin);
+        assert_eq!(rep.failed, 2, "{:?}", rep.outcomes);
+        assert!(rep.outcomes[0].ok);
+        assert_eq!(*removed.borrow(), vec![(cam_audio, ExtensionKind::AudioDriver)]);
+    }
+
+    #[test]
+    fn removal_command_quotes_the_path() {
+        let script = removal_command(Path::new("/L/A b.driver"), None, 501);
+        assert_eq!(script, "/bin/rm -rf '/L/A b.driver'");
     }
 
     #[test]

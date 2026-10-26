@@ -58,6 +58,18 @@ final class PrivacyStore {
         selected.toggle(PrivacyTarget(source: source.id, item: item.id))
     }
 
+    /// Items that can be cleaned now: accessible, in a browser that is closed.
+    static func selectable(_ source: PrivacySource) -> [PrivacyItem] {
+        source.running ? [] : source.items.filter(\.accessible)
+    }
+
+    func selectAll(in source: PrivacySource) -> BulkSelection {
+        BulkSelection(Self.selectable(source).map { PrivacyTarget(source: source.id, item: $0.id) }, in: Bindable(self).selected)
+    }
+
+    /// Every browser on screen.
+    var selectAll: BulkSelection { BulkSelection(combining: controls.apply(sources).map(selectAll(in:))) }
+
     func clean() async {
         let targets = Array(selected)
         guard !targets.isEmpty else { return }
@@ -77,7 +89,8 @@ struct PrivacyView: View {
         @Bindable var bindable = store
         ModulePage(.privacy, subtitle: loc("History, cookies and browsing traces from your browsers.")) {
             if store.report != nil {
-                ListToolbar(controls: store.controls, busy: store.scanning || store.cleaning || store.isWaiting) { Task { await store.scan() } }
+                ListToolbar(controls: store.controls, busy: store.scanning || store.isWaiting, disabled: store.cleaning,
+                            selectAll: store.selectAll) { Task { await store.scan() } }
             }
         } content: {
             if store.report == nil {
@@ -89,7 +102,7 @@ struct PrivacyView: View {
             } else {
                 ZStack(alignment: .bottom) {
                     ScrollView {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 14)], spacing: 14) {
+                        CardGrid(minWidth: 340) {
                             ForEach(store.controls.apply(store.sources)) { source in
                                 sourceCard(source, store: store)
                             }
@@ -101,7 +114,7 @@ struct PrivacyView: View {
                         if store.cleaning {
                             CleanProgressView()
                         } else {
-                            Text(loc("\(formatBytes(store.selectedBytes)) selected")).font(.headline).monospacedDigit()
+                            SelectionSummary(count: store.selected.count, bytes: store.selectedBytes)
                         }
                     } trailing: {
                         Button { store.confirming = true } label: {
@@ -123,6 +136,7 @@ struct PrivacyView: View {
     private func sourceCard(_ source: PrivacySource, store: PrivacyStore) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
+                SelectAllToggle(selection: store.selectAll(in: source), title: loc("Select all in \(locCore(source.name))"), showsTitle: false)
                 ModuleIcon(symbol: source.id == "system" ? "clock.arrow.circlepath" : "globe", theme: Destination.privacy.theme, size: 32)
                 Text(locCore(source.name)).font(.headline)
                 Spacer()
@@ -141,7 +155,6 @@ struct PrivacyView: View {
             }
         }
         .padding(16)
-        .surfaceCard()
     }
 
     private func icon(for item: String) -> String {

@@ -262,6 +262,9 @@ final class LargeFilesStore {
 
     var kinds: [String] { Array(Set(report?.files.map(\.kind) ?? [])).sorted() }
 
+    /// Every file on screen.
+    var selectAll: BulkSelection { BulkSelection(files.map(\.path), in: Bindable(self).selection) }
+
     var selectedBytes: UInt64 { report?.files.filter { selection.contains($0.path) }.reduce(0) { $0 + $1.bytes } ?? 0 }
 
     func scan() async {
@@ -305,7 +308,8 @@ struct LargeFilesView: View {
                 Text(loc("> 1 year")).tag(UInt32?.some(365))
             }.pickerStyle(.menu).fixedSize()
             if store.report != nil {
-                ListToolbar(controls: store.controls, busy: store.scanning || store.isWaiting) { Task { await store.scan() } }
+                ListToolbar(controls: store.controls, busy: store.scanning || store.isWaiting, disabled: store.trashing,
+                            selectAll: store.selectAll) { Task { await store.scan() } }
             }
         } content: {
             if store.report == nil {
@@ -339,7 +343,7 @@ struct LargeFilesView: View {
                         if store.trashing {
                             CleanProgressView(title: state.preferences.removingTitle)
                         } else {
-                            Text(loc("\(countFiles(store.selection.count)) · \(formatBytes(store.selectedBytes))")).font(.headline).monospacedDigit()
+                            SelectionSummary(count: store.selection.count, bytes: store.selectedBytes)
                         }
                     } trailing: {
                         Button { store.confirming = true } label: { Label(state.preferences.removeTitle, systemImage: "trash") }
@@ -426,6 +430,17 @@ final class DuplicatesStore {
         selection.toggle(path)
     }
 
+    /// Every copy of a group but one: the first unchecked one is kept.
+    func selectAll(in group: DupGroup) -> BulkSelection {
+        let kept = group.paths.first { !selection.contains($0) } ?? group.paths.first
+        return BulkSelection(group.paths.filter { $0 != kept }, in: Bindable(self).selection)
+    }
+
+    var visibleGroups: [DupGroup] { controls.apply(report?.groups ?? []) }
+
+    /// Every group on screen.
+    var selectAll: BulkSelection { BulkSelection(combining: visibleGroups.map(selectAll(in:))) }
+
     func trash() async {
         trashing = true
         defer { trashing = false }
@@ -443,7 +458,8 @@ struct DuplicatesView: View {
         @Bindable var bindable = store
         ModulePage(.duplicates, subtitle: loc("Byte-for-byte identical copies. At least one is always kept.")) {
             if store.report != nil {
-                ListToolbar(controls: store.controls, busy: store.scanning || store.isWaiting) { Task { await store.scan() } }
+                ListToolbar(controls: store.controls, busy: store.scanning || store.isWaiting, disabled: store.trashing,
+                            selectAll: store.selectAll) { Task { await store.scan() } }
             }
         } content: {
             if store.report == nil {
@@ -460,9 +476,10 @@ struct DuplicatesView: View {
                                 StatTile(symbol: "doc.on.doc.fill", theme: Destination.duplicates.theme, value: "\(r.groups.count)", label: loc("Groups"))
                                 StatTile(symbol: "externaldrive.fill", theme: ModuleTheme(colors: [.orange, .red]), value: formatBytes(r.totalWasted), label: loc("Duplicated space"))
                             }
-                            ForEach(store.controls.apply(r.groups)) { group in
+                            ForEach(store.visibleGroups) { group in
                                 CardSection(title: (group.paths.first.map { ($0 as NSString).lastPathComponent } ?? ""),
-                                            trailing: "\(group.paths.count) × \(formatBytes(group.bytes))") {
+                                            trailing: "\(group.paths.count) × \(formatBytes(group.bytes))",
+                                            selectAll: store.selectAll(in: group)) {
                                     ForEach(group.paths, id: \.self) { path in
                                         SelectableRow(isOn: store.selection.contains(path), title: abbreviatingHome((path as NSString).deletingLastPathComponent),
                                                       bytes: nil, path: path) {
@@ -478,7 +495,7 @@ struct DuplicatesView: View {
                         if store.trashing {
                             CleanProgressView(title: state.preferences.removingTitle)
                         } else {
-                            Text(loc("\(countCopies(store.selection.count)) · \(formatBytes(store.selectedBytes))")).font(.headline).monospacedDigit()
+                            SelectionSummary(count: store.selection.count, bytes: store.selectedBytes)
                         }
                     } trailing: {
                         Button { store.confirming = true } label: { Label(state.preferences.removeTitle, systemImage: "trash") }

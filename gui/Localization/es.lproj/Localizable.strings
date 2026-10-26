@@ -44,7 +44,6 @@
 "Ascending order" = "Orden ascendente";
 "Descending order" = "Orden descendente";
 "Scan again" = "Volver a analizar";
-"%@ selected" = "%@ seleccionados";
 "Selected" = "Seleccionado";
 "Last clean: %@" = "Última limpieza: %@";
 "%@ failures" = "%@ fallos";
@@ -191,7 +190,6 @@
 
 /* Maintenance */
 "One-off tasks that fix slowness and odd behavior." = "Tareas puntuales que resuelven lentitud y comportamientos extraños.";
-"%@ tasks selected" = "%@ tareas seleccionadas";
 "You'll be asked for the administrator password only once." = "Se pedirá la contraseña de administrador una sola vez.";
 "Running…" = "Ejecutando…";
 "Requires administrator" = "Requiere administrador";
@@ -256,7 +254,6 @@
 "No third-party plugins or add-ons are installed." = "No hay plugins ni complementos de terceros instalados.";
 "User" = "Usuario";
 "System · requires administrator" = "Sistema · requiere administrador";
-"%@ extensions selected" = "%@ seleccionadas";
 
 /* Updates */
 "Checks for new versions of apps that update with Sparkle." = "Comprueba nuevas versiones de las apps que se actualizan con Sparkle.";
@@ -327,8 +324,6 @@
 "%@ failure" = "%@ fallo";
 "inactive %@ day" = "inactivo %@ día";
 "active %@ day ago" = "activo hace %@ día";
-"%@ task selected" = "%@ tarea seleccionada";
-"%@ extension selected" = "%@ seleccionada";
 "%@ compatible app was checked." = "Se comprobó %@ app compatible.";
 "load average · %@ core" = "carga media · %@ núcleo";
 "In use by an open app · %@" = "En uso por una app abierta · %@";
@@ -382,3 +377,26 @@
 "Menu bar" = "Barra de menús";
 "Show the resource monitor in the menu bar" = "Mostrar el monitor de recursos en la barra de menús";
 "CPU, memory, disk and swap at a glance, even when MacCleaner is closed. It starts when you log in." = "CPU, memoria, disco y swap de un vistazo, incluso con MacCleaner cerrado. Se inicia al iniciar sesión.";
+
+/* Extensions: device drivers and system extensions */
+"Audio drivers" = "Drivers de audio";
+"Camera plugins" = "Plugins de cámara";
+"Camera extensions" = "Extensiones de cámara";
+"Driver extensions" = "Extensiones de drivers";
+"System extensions" = "Extensiones del sistema";
+"Orphan" = "Huérfana";
+"The app that installed it is no longer installed, but it is still loaded." = "La app que la instaló ya no está, pero sigue cargada.";
+"Installed by %@, which is no longer installed" = "Instalada por %@, que ya no está instalada";
+"Installed by %@" = "Instalada por %@";
+"macOS only lets you turn these off in System Settings." = "macOS solo permite desactivarlas desde Ajustes del Sistema.";
+"In progress" = "En curso";
+
+/* Selection */
+"Select all" = "Seleccionar todo";
+"Deselect all" = "Deseleccionar todo";
+"Select all in %@" = "Seleccionar todo en %@";
+"%@ item selected" = "%@ elemento seleccionado";
+"%@ items selected" = "%@ elementos seleccionados";
+"Remove %@ of leftovers?" = "¿Eliminar %@ de restos?";
+"Remove %@ of extensions?" = "¿Eliminar %@ de extensiones?";
+"Nothing selected" = "Nada seleccionado";

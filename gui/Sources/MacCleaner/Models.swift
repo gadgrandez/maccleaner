@@ -196,7 +196,14 @@ struct ExtensionItem: Codable, Identifiable, Hashable, Sendable {
     let scope: String
     let bytes: UInt64
     let removable: Bool
+    /// App that installed it (system extensions).
+    let origin: String?
+    /// The app that installed it is gone, but it is still loaded.
+    let orphan: Bool
     var id: String { path }
+
+    /// Registered with macOS: only System Settings can turn it off.
+    var isSystemExtension: Bool { ["camera_extension", "driver_extension", "system_extension"].contains(kind) }
 
     var kindTitle: String {
         switch kind {
@@ -207,6 +214,11 @@ struct ExtensionItem: Codable, Identifiable, Hashable, Sendable {
         case "screen_saver": loc("Screen savers")
         case "services": loc("Services")
         case "mail_bundle": loc("Mail plugins")
+        case "audio_driver": loc("Audio drivers")
+        case "camera_plugin": loc("Camera plugins")
+        case "camera_extension": loc("Camera extensions")
+        case "driver_extension": loc("Driver extensions")
+        case "system_extension": loc("System extensions")
         default: kind
         }
     }

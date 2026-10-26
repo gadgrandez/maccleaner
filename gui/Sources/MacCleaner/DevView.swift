@@ -76,18 +76,16 @@ final class DevStore {
         }
     }
 
-    func isSelected(_ project: DevProject) -> Bool {
-        project.artifacts.allSatisfy { selectedArtifacts.contains($0.path) }
+    var selectedCount: Int { selectedArtifacts.count + selectedTools.count }
+
+    func selectAll(in project: DevProject) -> BulkSelection {
+        BulkSelection(project.artifacts.map(\.path), in: Bindable(self).selectedArtifacts)
     }
 
-    func toggle(_ project: DevProject) {
-        let paths = project.artifacts.map(\.path)
-        if isSelected(project) { selectedArtifacts.subtract(paths) } else { selectedArtifacts.formUnion(paths) }
-    }
+    var selectAllTools: BulkSelection { BulkSelection(visibleTools.map(\.id), in: Bindable(self).selectedTools) }
 
-    func toggle(artifact path: String) { selectedArtifacts.toggle(path) }
-
-    func toggle(tool id: String) { selectedTools.toggle(id) }
+    /// Every project and tool on screen.
+    var selectAll: BulkSelection { BulkSelection(combining: visibleProjects.map(selectAll(in:)) + [selectAllTools]) }
 
     func clean() async {
         let items = tools?.items ?? []
@@ -120,7 +118,8 @@ struct DevView: View {
         ModulePage(.devJunk, subtitle: loc("Project dependencies and builds, toolchain caches and old versions.")) {
             if store.hasResults {
                 Toggle(loc("Inactive only"), isOn: $bindable.inactiveOnly).toggleStyle(.switch).controlSize(.small)
-                ListToolbar(controls: store.projectControls, busy: store.scanning || store.cleaning || store.isWaiting) { Task { await store.scan() } }
+                ListToolbar(controls: store.projectControls, busy: store.scanning || store.isWaiting, disabled: store.cleaning,
+                            selectAll: store.selectAll) { Task { await store.scan() } }
             }
         } content: {
             if !store.hasResults {
@@ -141,7 +140,7 @@ struct DevView: View {
                             }
                             if let tools = store.tools, !store.visibleTools.isEmpty {
                                 sectionTitle(loc("Tools"), trailing: formatBytes(tools.totalBytes))
-                                CardSection(title: loc("Caches and old versions")) {
+                                CardSection(title: loc("Caches and old versions"), selectAll: store.selectAllTools) {
                                     ForEach(store.visibleTools) { item in toolRow(item, store: store) }
                                 }
                             }
@@ -155,7 +154,7 @@ struct DevView: View {
                             CleanProgressView()
                         } else {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(loc("\(formatBytes(store.selectedBytes)) selected")).font(.headline).monospacedDigit()
+                                SelectionSummary(count: store.selectedCount, bytes: store.selectedBytes)
                                 if let last = store.lastClean {
                                     LastCleanSummary(report: last, cleanedBytes: last.removedBytes)
                                 }
@@ -220,7 +219,7 @@ struct DevView: View {
             Image(systemName: item.action == .command ? "terminal" : "shippingbox")
                 .frame(width: 22).foregroundStyle(Destination.devJunk.theme.tint)
         } toggle: {
-            store.toggle(tool: item.id)
+            store.selectedTools.toggle(item.id)
         }
     }
 }
@@ -233,8 +232,7 @@ private struct ProjectCard: View {
         let inactive = project.inactiveDays >= DevStore.inactiveDays
         VStack(alignment: .leading, spacing: Space.s) {
             HStack(alignment: .firstTextBaseline, spacing: Space.m) {
-                Toggle(project.name, isOn: Binding(get: { store.isSelected(project) }, set: { _ in store.toggle(project) }))
-                    .toggleStyle(.checkbox).labelsHidden()
+                SelectAllToggle(selection: store.selectAll(in: project), title: loc("Select all in \(project.name)"), showsTitle: false)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(project.name).font(.headline)
@@ -253,7 +251,7 @@ private struct ProjectCard: View {
                               subtitle: artifact.ecosystem, bytes: artifact.bytes, path: artifact.path) {
                     Image(systemName: "folder.fill").frame(width: 22).foregroundStyle(.secondary)
                 } toggle: {
-                    store.toggle(artifact: artifact.path)
+                    store.selectedArtifacts.toggle(artifact.path)
                 }
                 .padding(.leading, 26)
             }

@@ -28,6 +28,7 @@ final class AppsStore {
     var loadingOrphans = false
     var selectedOrphans = Set<String>()
     var cleaningOrphans = false
+    var confirmingOrphans = false
 
     enum Filter: String, CaseIterable, Identifiable {
         case all, intel, appStore, setapp
@@ -117,6 +118,19 @@ final class AppsStore {
             orphans = r
             selectedOrphans = Set(r.flatMap { $0.items.map(\.path) })
         }
+    }
+
+    var selectAllLeftovers: BulkSelection {
+        BulkSelection(leftovers?.items.map(\.path) ?? [], in: Bindable(self).selectedLeftovers)
+    }
+
+    func selectAll(in group: OrphanGroup) -> BulkSelection {
+        BulkSelection(group.items.map(\.path), in: Bindable(self).selectedOrphans)
+    }
+
+    /// Every group on screen.
+    var selectAllOrphans: BulkSelection {
+        BulkSelection(combining: orphanControls.apply(orphans ?? []).map(selectAll(in:)))
     }
 
     var orphanSelectedBytes: UInt64 {
@@ -210,7 +224,8 @@ struct UninstallerView: View {
                     }
                     Spacer()
                 }
-                CardSection(title: loc("Leftovers"), trailing: store.leftovers.map { formatBytes($0.totalBytes) }) {
+                CardSection(title: loc("Leftovers"), trailing: store.leftovers.map { formatBytes($0.totalBytes) },
+                            selectAll: store.leftovers.map { _ in store.selectAllLeftovers }) {
                     if store.loadingLeftovers {
                         ProgressView().frame(maxWidth: .infinity)
                     } else if let l = store.leftovers, !l.items.isEmpty {
@@ -263,9 +278,11 @@ struct LeftoversView: View {
 
     var body: some View {
         let store = state.apps
+        @Bindable var bindable = store
         ModulePage(.leftovers, subtitle: loc("Data from apps that are no longer installed.")) {
             if store.orphans != nil {
-                ListToolbar(controls: store.orphanControls, refreshLabel: loc("Search again"), busy: store.loadingOrphans || store.orphanWaiting) {
+                ListToolbar(controls: store.orphanControls, refreshLabel: loc("Search again"), busy: store.loadingOrphans || store.orphanWaiting,
+                            disabled: store.cleaningOrphans, selectAll: store.selectAllOrphans) {
                     Task { await store.loadOrphans() }
                 }
             }
@@ -281,7 +298,7 @@ struct LeftoversView: View {
                     ScrollView {
                         LazyVStack(spacing: 12) {
                             ForEach(store.orphanControls.apply(orphans)) { group in
-                                CardSection(title: group.id, trailing: formatBytes(group.totalBytes)) {
+                                CardSection(title: group.id, trailing: formatBytes(group.totalBytes), selectAll: store.selectAll(in: group)) {
                                     ForEach(group.items) { item in
                                         SelectableRow(isOn: store.selectedOrphans.contains(item.path), title: item.name,
                                                       subtitle: item.detail, bytes: item.bytes, path: item.path) {
@@ -297,10 +314,10 @@ struct LeftoversView: View {
                         if store.cleaningOrphans {
                             CleanProgressView(title: loc("Removing…"))
                         } else {
-                            Text(loc("\(formatBytes(store.orphanSelectedBytes)) selected")).font(.headline).monospacedDigit()
+                            SelectionSummary(count: store.selectedOrphans.count, bytes: store.orphanSelectedBytes)
                         }
                     } trailing: {
-                        Button { Task { await store.cleanOrphans() } } label: {
+                        Button { store.confirmingOrphans = true } label: {
                             Label(store.cleaningOrphans ? loc("Removing…") : loc("Remove leftovers"), systemImage: "trash")
                         }
                         .primaryActionStyle().controlSize(.large)
@@ -308,6 +325,11 @@ struct LeftoversView: View {
                     }
                 }
             }
+        }
+        .confirmationDialog(loc("Remove \(formatBytes(store.orphanSelectedBytes)) of leftovers?"), isPresented: $bindable.confirmingOrphans) {
+            Button(state.preferences.removeTitle, role: .destructive) { Task { await store.cleanOrphans() } }
+        } message: {
+            Text(state.preferences.recoveryNote)
         }
     }
 }
@@ -322,11 +344,13 @@ final class ExtensionsStore {
     var loading = false
     var selection = Set<String>()
     var removing = false
+    var confirming = false
     let controls = ListControls<ExtensionItem>([
         .name(\.name),
         .size(\.bytes),
         .text("kind", loc("Type"), symbol: "puzzlepiece") { $0.kindTitle },
-    ], searchPrompt: loc("Search extensions")) { [$0.name, $0.kindTitle] }
+        .text("status", loc("Status"), symbol: "exclamationmark.triangle") { $0.orphan ? "0" : "1" },
+    ], searchPrompt: loc("Search extensions")) { [$0.name, $0.kindTitle, $0.origin ?? ""] }
 
     init(alerts: Alerts) { self.alerts = alerts }
 
@@ -336,6 +360,23 @@ final class ExtensionsStore {
         if let r = await alerts.run({ try await Core.extensions() }) { items = r }
         selection.removeAll()
     }
+
+    var visible: [ExtensionItem] { controls.apply(items) }
+
+    /// Kinds on screen, each with its items.
+    var groups: [(kind: String, items: [ExtensionItem])] {
+        let visible = visible
+        return Array(Set(visible.map(\.kind))).sorted().map { kind in (kind, visible.filter { $0.kind == kind }) }
+    }
+
+    func selectAll(in items: [ExtensionItem]) -> BulkSelection {
+        BulkSelection(items.filter(\.removable).map(\.path), in: Bindable(self).selection)
+    }
+
+    /// Every removable item on screen.
+    var selectAll: BulkSelection { selectAll(in: visible) }
+
+    var selectedBytes: UInt64 { items.filter { selection.contains($0.path) }.reduce(0) { $0 + $1.bytes } }
 
     func remove() async {
         removing = true
@@ -351,10 +392,10 @@ struct ExtensionsView: View {
 
     var body: some View {
         let store = state.extensions
-        let visible = store.controls.apply(store.items)
-        let kinds = Array(Set(visible.map(\.kind))).sorted()
+        @Bindable var bindable = store
         ModulePage(.extensions, subtitle: loc("Plugins and add-ons installed on the system.")) {
-            ListToolbar(controls: store.controls, refreshLabel: loc("Refresh"), busy: store.loading) { Task { await store.load() } }
+            ListToolbar(controls: store.controls, refreshLabel: loc("Refresh"), busy: store.loading, disabled: store.removing,
+                        selectAll: store.selectAll) { Task { await store.load() } }
         } content: {
             if store.items.isEmpty && !store.loading {
                 EmptyResult(symbol: "puzzlepiece.extension", title: loc("No extensions"), message: loc("No third-party plugins or add-ons are installed."))
@@ -362,38 +403,70 @@ struct ExtensionsView: View {
                 ZStack(alignment: .bottom) {
                     ScrollView {
                         LazyVStack(spacing: 12) {
-                            ForEach(kinds, id: \.self) { kind in
-                                let group = visible.filter { $0.kind == kind }
-                                CardSection(title: group[0].kindTitle, trailing: "\(group.count)") {
+                            ForEach(store.groups, id: \.kind) { kind, group in
+                                CardSection(title: group[0].kindTitle, trailing: "\(group.count)",
+                                            selectAll: group.contains(where: \.removable) ? store.selectAll(in: group) : nil) {
+                                    if group[0].isSystemExtension {
+                                        SystemExtensionsNote()
+                                    }
                                     ForEach(group) { item in
                                         SelectableRow(isOn: store.selection.contains(item.path), title: item.name,
-                                                      subtitle: item.scope == "user" ? loc("User") : loc("System · requires administrator"),
-                                                      bytes: item.bytes, path: item.path, disabled: !item.removable) {
+                                                      subtitle: subtitle(item), bytes: item.bytes, path: item.path,
+                                                      disabled: !item.removable,
+                                                      badge: item.orphan ? Pill(text: loc("Orphan"), color: .orange) : nil) {
                                             FileIcon(path: item.path, size: 22)
                                         } toggle: { store.selection.toggle(item.path) }
+                                        .help(item.orphan ? loc("The app that installed it is no longer installed, but it is still loaded.") : "")
                                     }
                                 }
                             }
                         }
                         .padding(.horizontal, 24).padding(.bottom, 96)
                     }
-                    if !store.selection.isEmpty {
-                        ActionBar {
-                            if store.removing {
-                                CleanProgressView(title: loc("Removing…"))
-                            } else {
-                                Text(locCount(store.selection.count, one: { loc("\($0) extension selected") }, other: { loc("\($0) extensions selected") })).font(.headline)
-                            }
-                        } trailing: {
-                            Button { Task { await store.remove() } } label: { Label(loc("Remove"), systemImage: "trash") }
-                                .primaryActionStyle().controlSize(.large).disabled(store.removing)
+                    ActionBar {
+                        if store.removing {
+                            CleanProgressView(title: loc("Removing…"))
+                        } else {
+                            SelectionSummary(count: store.selection.count, bytes: store.selectedBytes)
                         }
+                    } trailing: {
+                        Button { store.confirming = true } label: { Label(loc("Remove"), systemImage: "trash") }
+                            .primaryActionStyle().controlSize(.large).disabled(store.selection.isEmpty || store.removing)
                     }
                 }
             }
         }
         .overlay { if store.loading && store.items.isEmpty { ProgressView() } }
         .task { if store.items.isEmpty { await store.load() } }
+        .confirmationDialog(loc("Remove \(formatBytes(store.selectedBytes)) of extensions?"), isPresented: $bindable.confirming) {
+            Button(state.preferences.removeTitle, role: .destructive) { Task { await store.remove() } }
+        } message: {
+            Text(state.preferences.recoveryNote)
+        }
+    }
+
+    private func subtitle(_ item: ExtensionItem) -> String {
+        if let origin = item.origin {
+            return item.orphan ? loc("Installed by \(origin), which is no longer installed") : loc("Installed by \(origin)")
+        }
+        return item.scope == "user" ? loc("User") : loc("System · requires administrator")
+    }
+}
+
+/// System extensions can only be turned off in System Settings.
+private struct SystemExtensionsNote: View {
+    var body: some View {
+        HStack(spacing: Space.s) {
+            Image(systemName: "info.circle").foregroundStyle(.secondary)
+            Text(loc("macOS only lets you turn these off in System Settings."))
+                .font(.callout).foregroundStyle(.secondary)
+            Spacer(minLength: Space.s)
+            Button(loc("Open Settings")) {
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
+            }
+            .secondaryActionStyle()
+        }
+        .padding(.horizontal, Space.s)
     }
 }
 

@@ -73,10 +73,3 @@ final class AppState {
         NSWorkspace.shared.open(url)
     }
 }
-
-extension Set {
-    /// Inserts the element if absent; removes it if present.
-    mutating func toggle(_ element: Element) {
-        if contains(element) { remove(element) } else { insert(element) }
-    }
-}

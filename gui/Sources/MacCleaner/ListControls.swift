@@ -110,14 +110,22 @@ struct ListControlsBar<Item>: View {
 struct ListToolbar<Item>: View {
     let controls: ListControls<Item>
     var refreshLabel = loc("Scan again")
+    /// The refresh is running: its button shows a spinner.
     var busy = false
+    /// Another operation (a cleanup) is running: refreshing waits for it.
+    var disabled = false
+    /// Checks or unchecks everything the page shows.
+    var selectAll: BulkSelection? = nil
     var refresh: (() -> Void)? = nil
 
     var body: some View {
         Group {
+            if let selectAll {
+                SelectAllToggle(selection: selectAll)
+            }
             ListControlsBar(controls: controls)
             if let refresh {
-                IconButton(symbol: "arrow.clockwise", label: refreshLabel, disabled: busy, action: refresh)
+                IconButton(symbol: "arrow.clockwise", label: refreshLabel, disabled: disabled, busy: busy, action: refresh)
             }
         }
     }

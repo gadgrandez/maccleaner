@@ -19,6 +19,8 @@ final class MaintenanceStore {
         selected = Set(t.filter { !$0.requiresAdmin }.map(\.id))
     }
 
+    var selectAll: BulkSelection { BulkSelection(tasks.map(\.id), in: Bindable(self).selected) }
+
     func run() async {
         let ids = tasks.map(\.id).filter(selected.contains)
         guard !ids.isEmpty else { return }
@@ -35,9 +37,11 @@ struct MaintenanceView: View {
     var body: some View {
         let store = state.maintenance
         ModulePage(.maintenance, subtitle: loc("One-off tasks that fix slowness and odd behavior.")) {
+            SelectAllToggle(selection: store.selectAll)
+        } content: {
             ZStack(alignment: .bottom) {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 14)], spacing: 14) {
+                    CardGrid {
                         ForEach(store.tasks) { task in
                             taskCard(task, store: store)
                         }
@@ -47,7 +51,7 @@ struct MaintenanceView: View {
                 }
                 ActionBar {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(locCount(store.selected.count, one: { loc("\($0) task selected") }, other: { loc("\($0) tasks selected") })).font(.headline)
+                        SelectionSummary(count: store.selected.count)
                         if store.tasks.contains(where: { $0.requiresAdmin && store.selected.contains($0.id) }) {
                             Text(loc("You'll be asked for the administrator password only once.")).font(.caption).foregroundStyle(.secondary)
                         }
@@ -84,8 +88,6 @@ struct MaintenanceView: View {
                 .toggleStyle(.checkbox).labelsHidden()
         }
         .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .surfaceCard()
     }
 }
 

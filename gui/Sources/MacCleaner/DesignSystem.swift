@@ -602,6 +602,7 @@ struct SelectableRow<Icon: View>: View {
     let bytes: UInt64?
     var path: String? = nil
     var disabled = false
+    var badge: Pill? = nil
     @ViewBuilder let icon: () -> Icon
     let toggle: () -> Void
 
@@ -619,6 +620,7 @@ struct SelectableRow<Icon: View>: View {
                 }
             }
             Spacer(minLength: Space.s)
+            if let badge { badge }
             if let bytes {
                 Text(formatBytes(bytes)).monospacedDigit().foregroundStyle(.secondary)
             }
@@ -667,14 +669,34 @@ struct FileIcon: View {
 }
 
 /// Titled block that groups content within a page.
+/// Cards that wrap to the available width. The cards of a row share its height and top edge,
+/// so the grid supplies their surface: each card only lays out (and pads) its content.
+struct CardGrid<Content: View>: View {
+    var minWidth: CGFloat = 300
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: minWidth), spacing: Space.m + 2, alignment: .top)], spacing: Space.m + 2) {
+            Group(content: content)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .surfaceCard()
+        }
+    }
+}
+
 struct CardSection<Content: View>: View {
     let title: String
     var trailing: String? = nil
+    /// Checks or unchecks every item of the section.
+    var selectAll: BulkSelection? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s + 2) {
             HStack {
+                if let selectAll {
+                    SelectAllToggle(selection: selectAll, title: loc("Select all in \(title)"), showsTitle: false)
+                }
                 Text(title).font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
                 if let trailing { Text(trailing).font(.callout).foregroundStyle(.secondary).monospacedDigit() }
@@ -706,16 +728,26 @@ struct IconButton: View {
     let symbol: String
     let label: String
     var disabled = false
+    /// Its action is running: a spinner takes the symbol's place and the button is disabled.
+    var busy = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).frame(width: 18, height: 18)
+            Group {
+                if busy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: symbol)
+                }
+            }
+            .frame(width: 18, height: 18)
         }
         .secondaryActionStyle()
-        .disabled(disabled)
+        .disabled(disabled || busy)
         .help(label)
         .accessibilityLabel(label)
+        .accessibilityValue(busy ? loc("In progress") : "")
     }
 }
 

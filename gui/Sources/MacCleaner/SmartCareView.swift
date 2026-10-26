@@ -91,7 +91,7 @@ struct SmartCareView: View {
         return ScrollView {
             VStack(spacing: 16) {
                 hero(store, junkBytes: junk.selectedBytes)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 14)], spacing: 14) {
+                CardGrid(minWidth: 260) {
                     ResultCard(destination: .junk, value: formatBytes(junk.selectedBytes),
                                detail: loc("of safe junk ready to clean"), action: loc("Review")) { store.open(.junk) }
                     ResultCard(destination: .devJunk, value: formatBytes(state.dev.selectedBytes),
@@ -174,7 +174,5 @@ private struct ResultCard: View {
             Button(action, action: open).secondaryActionStyle()
         }
         .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .surfaceCard()
     }
 }

@@ -8,8 +8,8 @@ final class JunkStore {
     var scanning = false
     var cleaning = false
     var confirming = false
-    var selectedCategories: Set<String> = []
-    var excluded: Set<String> = []
+    /// Paths of the checked items.
+    var selection: Set<String> = []
     var expanded: Set<String> = []
     var lastClean: CleanReport?
     /// Items belonging to open apps: shown, but not checked by default.
@@ -69,48 +69,30 @@ final class JunkStore {
             defer { scanning = false }
             guard let r = await alerts.run({ try await Core.scan() }) else { return }
             // Keep what the user unchecked by hand between scans.
-            let manual = excluded.subtracting(inUse)
+            let manual = Set(Self.defaultPaths(categories)).subtracting(selection).subtracting(inUse)
             report = r
-            selectedCategories = Set(r.categories.filter { $0.defaultSelected && $0.bytes > 0 }.map(\.id))
             inUse = Self.inUsePaths(r)
-            let paths = Set(r.categories.flatMap { $0.items.map(\.path) })
-            excluded = inUse.union(manual.intersection(paths))
+            selection = Set(Self.defaultPaths(r.categories)).subtracting(inUse).subtracting(manual)
         }
     }
 
-    func isSelected(_ item: ScanItem, in cat: CategoryReport) -> Bool {
-        selectedCategories.contains(cat.id) && !excluded.contains(item.path)
+    /// Items checked after a scan: those of the categories that are safe to clean.
+    private static func defaultPaths(_ categories: [CategoryReport]) -> [String] {
+        categories.filter { $0.defaultSelected && $0.bytes > 0 }.flatMap { $0.items.map(\.path) }
     }
 
-    func toggle(_ item: ScanItem, in cat: CategoryReport) {
-        if !selectedCategories.contains(cat.id) {
-            selectedCategories.insert(cat.id)
-            excluded.formUnion(cat.items.map(\.path))
-            excluded.remove(item.path)
-        } else if excluded.contains(item.path) {
-            excluded.remove(item.path)
-        } else {
-            excluded.insert(item.path)
-        }
+    /// Items of a category on screen: its matches while searching.
+    func shownItems(_ cat: CategoryReport) -> [ScanItem] { controls.apply(cat.items) }
+
+    func selectAll(in cat: CategoryReport) -> BulkSelection {
+        BulkSelection(shownItems(cat).map(\.path), in: Bindable(self).selection)
     }
 
-    func toggle(_ cat: CategoryReport) {
-        if selectedCategories.contains(cat.id) {
-            selectedCategories.remove(cat.id)
-        } else {
-            selectedCategories.insert(cat.id)
-            excluded.subtract(cat.items.map(\.path))
-        }
-    }
-
-    func selectedBytes(in cat: CategoryReport) -> UInt64 {
-        guard selectedCategories.contains(cat.id) else { return 0 }
-        return cat.items.filter { !excluded.contains($0.path) }.reduce(0) { $0 + $1.bytes }
-    }
+    /// Every item on screen.
+    var selectAll: BulkSelection { BulkSelection(combining: visibleCategories.map(selectAll(in:))) }
 
     private var selectedItems: [(CategoryReport, ScanItem)] {
-        categories.filter { selectedCategories.contains($0.id) }
-            .flatMap { cat in cat.items.filter { !excluded.contains($0.path) }.map { (cat, $0) } }
+        categories.flatMap { cat in cat.items.filter { selection.contains($0.path) }.map { (cat, $0) } }
     }
 
     var selectedBytes: UInt64 { selectedItems.reduce(0) { $0 + $1.1.bytes } }
@@ -136,7 +118,8 @@ struct JunkView: View {
         @Bindable var bindable = store
         ModulePage(.junk, subtitle: loc("Caches, logs and development leftovers that are safe to delete.")) {
             if store.report != nil {
-                ListToolbar(controls: store.controls, busy: store.scanning || store.cleaning || store.isWaiting) { Task { await store.scan() } }
+                ListToolbar(controls: store.controls, busy: store.scanning || store.isWaiting, disabled: store.cleaning,
+                            selectAll: store.selectAll) { Task { await store.scan() } }
             }
         } content: {
             if store.report == nil || store.scanning && store.report == nil {
@@ -168,7 +151,7 @@ struct JunkView: View {
                             CleanProgressView()
                         } else {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(loc("\(formatBytes(store.selectedBytes)) selected")).font(.headline).monospacedDigit()
+                                SelectionSummary(count: store.selection.count, bytes: store.selectedBytes)
                                 if let last = store.lastClean {
                                     LastCleanSummary(report: last, cleanedBytes: last.removedBytes)
                                 }
@@ -216,10 +199,11 @@ private struct JunkCategoryCard: View {
     var body: some View {
         // While searching, categories expand to show the matches.
         let expanded = store.expanded.contains(category.id) || store.controls.isSearching
+        let items = store.shownItems(category)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                Toggle("", isOn: Binding(get: { store.selectedCategories.contains(category.id) }, set: { _ in store.toggle(category) }))
-                    .toggleStyle(.checkbox).labelsHidden()
+                SelectAllToggle(selection: store.selectAll(in: category),
+                                title: loc("Select all in \(locCore(category.name))"), showsTitle: false)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(locCore(category.name)).font(.headline)
@@ -250,15 +234,15 @@ private struct JunkCategoryCard: View {
             if expanded {
                 Divider().padding(.horizontal, 16)
                 LazyVStack(spacing: 0) {
-                    ForEach(store.controls.apply(category.items)) { item in
-                        SelectableRow(isOn: store.isSelected(item, in: category), title: item.name,
+                    ForEach(items) { item in
+                        SelectableRow(isOn: store.selection.contains(item.path), title: item.name,
                                       subtitle: store.inUse.contains(item.path)
                                           ? loc("In use by an open app · \(countFiles(item.files))")
                                           : countFiles(item.files),
                                       bytes: item.bytes, path: item.path) {
                             FileIcon(path: item.path, size: 22)
                         } toggle: {
-                            store.toggle(item, in: category)
+                            store.selection.toggle(item.path)
                         }
                         .padding(.horizontal, 16)
                     }
