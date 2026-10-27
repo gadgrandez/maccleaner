@@ -136,8 +136,11 @@ struct FlowLayout: Layout {
         var lines: [[(index: Int, size: CGSize)]] = [[]]
         var x: CGFloat = 0
         for (i, view) in subviews.enumerated() {
+            // Controls keep their single-line height: proposing a narrower width wraps their
+            // labels letter by letter (SwiftUI measures with tiny widths while resizing columns),
+            // which made the page taller than the window and shifted it out of place.
             let ideal = view.sizeThatFits(.unspecified)
-            let size = ideal.width > maxWidth ? view.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil)) : ideal
+            let size = CGSize(width: min(ideal.width, maxWidth), height: ideal.height)
             if x > 0 && x + size.width > maxWidth {
                 lines.append([])
                 x = 0
