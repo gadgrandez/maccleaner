@@ -589,6 +589,13 @@ impl Visitor for UsageVisitor {
     }
 }
 
+/// The current user can write to `path`: create and remove entries in a folder (moving an item
+/// to the Trash renames it out of its parent, and a folder moves only if it is writable too).
+/// Go's module cache, for instance, is read-only on purpose.
+pub fn writable(path: &Path) -> bool {
+    CString::new(path.as_os_str().as_bytes()).is_ok_and(|c| unsafe { libc::access(c.as_ptr(), libc::W_OK) } == 0)
+}
+
 /// Disk usage of each path (file, symlink or directory), without following links.
 pub fn usages(paths: &[PathBuf]) -> Vec<Usage> {
     let roots: Vec<(PathBuf, usize)> = paths.iter().cloned().zip(0..).collect();

@@ -136,13 +136,6 @@ fn matching_rule(dir: &Path, name: &str, files: &HashSet<OsString>) -> Option<&'
     })
 }
 
-/// The current user can create and remove entries in `dir`: moving an artifact to the Trash
-/// renames it out of its parent. Go's module cache, for instance, is read-only on purpose.
-fn writable(dir: &Path) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-    std::ffi::CString::new(dir.as_os_str().as_bytes()).is_ok_and(|c| unsafe { libc::access(c.as_ptr(), libc::W_OK) } == 0)
-}
-
 struct ProjectWalker {
     found: Vec<(PathBuf, Vec<(PathBuf, &'static ArtifactRule)>)>,
     scanned: u64,
@@ -190,7 +183,7 @@ impl ProjectWalker {
             }
         }
         // Artifacts that can't be moved out of a read-only folder are not offered.
-        if !artifacts.is_empty() && writable(dir) {
+        if !artifacts.is_empty() && fsutil::writable(dir) {
             self.found.push((dir.to_path_buf(), artifacts));
         }
         for name in descend {
@@ -288,7 +281,7 @@ fn validate_artifact(home: &Path, path: &Path) -> Result<(), String> {
     if !parent.starts_with(home) || parent == home {
         return Err("outside the home folder".into());
     }
-    if !writable(parent) {
+    if !fsutil::writable(parent) {
         return Err("its folder is read-only".into());
     }
     let files: HashSet<OsString> = fs::read_dir(parent)

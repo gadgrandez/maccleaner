@@ -1096,8 +1096,26 @@ struct JobRemoval {
     domain: JobDomain,
 }
 
-/// Removes all the jobs with a single authorization dialog; one result per job.
-type AdminRemover<'a> = &'a dyn Fn(&[JobRemoval]) -> Vec<Result<Action, String>>;
+/// What an uninstallation removes with administrator privileges.
+#[derive(Debug, Clone)]
+enum AdminRemoval {
+    /// A dead system-wide launchd job.
+    Job(JobRemoval),
+    /// An app the user can't move, installed as root (Microsoft Office's installer, for one).
+    App(PathBuf),
+}
+
+impl AdminRemoval {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Job(job) => &job.path,
+            Self::App(path) => path,
+        }
+    }
+}
+
+/// Removes all the items with a single authorization dialog; one result per item.
+type AdminRemover<'a> = &'a dyn Fn(&[AdminRemoval]) -> Vec<Result<Action, String>>;
 
 /// The orphan detection reports this system-wide job right now.
 fn orphan_job<'a>(installed: &'a Installed, raw: &str) -> Option<&'a JobFile> {
@@ -1110,10 +1128,15 @@ fn orphan_job<'a>(installed: &'a Installed, raw: &str) -> Option<&'a JobFile> {
 
 fn uninstall_in(roots: &Roots, req: &UninstallRequest, remove: Remover, admin: AdminRemover) -> CleanReport {
     let mut checked: Vec<Checked> = Vec::new();
+    let mut admin_items: Vec<AdminRemoval> = Vec::new();
     let mut app_id = None;
     if let Some(raw) = &req.app_path {
         let v = validate_app(roots, raw).map(|(path, info)| {
             app_id = info.bundle_id;
+            // Finder asks for the password too: moving a folder needs write access to it and its parent.
+            if !fsutil::writable(&path) || !path.parent().is_some_and(fsutil::writable) {
+                admin_items.push(AdminRemoval::App(path.clone()));
+            }
             (path, "app".to_string())
         });
         checked.push((raw.clone(), v));
@@ -1121,21 +1144,20 @@ fn uninstall_in(roots: &Roots, req: &UninstallRequest, remove: Remover, admin: A
     // System-wide jobs are only removed as orphans, never as part of an app's uninstallation.
     let outside_home = req.leftover_paths.iter().any(|raw| !Path::new(raw).starts_with(&roots.home));
     let installed = (req.app_path.is_none() && outside_home).then(|| Installed::scan(roots));
-    let mut jobs: Vec<JobRemoval> = Vec::new();
     for raw in &req.leftover_paths {
         let v = match installed.as_ref().and_then(|i| orphan_job(i, raw)) {
             Some(job) => {
-                jobs.push(JobRemoval { label: job.label.clone(), path: job.path.clone(), domain: job.domain });
+                admin_items.push(AdminRemoval::Job(JobRemoval { label: job.label.clone(), path: job.path.clone(), domain: job.domain }));
                 Ok((job.path.clone(), job.kind.as_str().to_string()))
             }
             None => validate_leftover(roots, raw, app_id.as_deref()).map(|(p, k)| (p, k.as_str().to_string())),
         };
         checked.push((raw.clone(), v));
     }
-    let admin_results: HashMap<PathBuf, Result<Action, String>> = if req.dry_run || jobs.is_empty() {
+    let admin_results: HashMap<PathBuf, Result<Action, String>> = if req.dry_run || admin_items.is_empty() {
         HashMap::new()
     } else {
-        jobs.iter().map(|j| j.path.clone()).zip(admin(&jobs)).collect()
+        admin_items.iter().map(|item| item.path().to_path_buf()).zip(admin(&admin_items)).collect()
     };
     let remover = |p: &Path| admin_results.get(p).cloned().unwrap_or_else(|| remove(p));
     // If the app cannot be removed, its data is kept.
@@ -1175,12 +1197,15 @@ fn removal_command(path: &Path, dest: Option<&Path>, uid: u32) -> String {
     }
 }
 
-fn remove_jobs_as_admin(home: &Path, jobs: &[JobRemoval], action: Action) -> Vec<Result<Action, String>> {
+fn remove_as_admin(home: &Path, items: &[AdminRemoval], action: Action) -> Vec<Result<Action, String>> {
     let uid = unsafe { libc::getuid() };
     let trash = home.join(".Trash");
-    let scripts = jobs.iter().map(|job| {
-        let dest = (action == Action::Trash).then(|| trash_destination(&trash, &job.path));
-        job_removal_script(job, dest.as_deref(), uid)
+    let scripts = items.iter().map(|item| {
+        let dest = (action == Action::Trash).then(|| trash_destination(&trash, item.path()));
+        match item {
+            AdminRemoval::Job(job) => job_removal_script(job, dest.as_deref(), uid),
+            AdminRemoval::App(path) => removal_command(path, dest.as_deref(), uid),
+        }
     });
     run_admin_scripts(scripts, action)
 }
@@ -1388,7 +1413,7 @@ pub fn orphans() -> Result<Vec<OrphanGroup>, String> {
 pub fn uninstall(req: &UninstallRequest) -> Result<CleanReport, String> {
     let roots = Roots::real()?;
     let action = trash::preferred_action();
-    Ok(uninstall_in(&roots, req, &|p| trash::discard(p, action), &|jobs| remove_jobs_as_admin(&roots.home, jobs, action)))
+    Ok(uninstall_in(&roots, req, &|p| trash::discard(p, action), &|items| remove_as_admin(&roots.home, items, action)))
 }
 
 pub fn list_extensions() -> Result<Vec<ExtensionItem>, String> {
@@ -1427,7 +1452,7 @@ mod tests {
         p.to_string_lossy().into_owned()
     }
 
-    fn no_admin(_: &[JobRemoval]) -> Vec<Result<Action, String>> {
+    fn no_admin(_: &[AdminRemoval]) -> Vec<Result<Action, String>> {
         panic!("unexpected administrator removal")
     }
 
@@ -1740,6 +1765,40 @@ mod tests {
         assert!(!lib.join("Caches/com.foo.app").exists());
         assert!(!lib.join("Preferences/com.foo.app.plist").exists());
         assert!(lib.join("Caches").exists());
+    }
+
+    #[test]
+    fn apps_the_user_cannot_move_are_removed_as_admin() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new("apps-root-owned");
+        let r = roots(&tmp);
+        let lib = r.user_library();
+        let app = make_app(&r.applications, "Office", &[("CFBundleIdentifier", "com.office.app")], false, b"");
+        touch(&lib.join("Caches/com.office.app/x"), 10);
+        // Like an app installed as root: the user can't rename it out of the folder.
+        fs::set_permissions(&app, fs::Permissions::from_mode(0o555)).unwrap();
+        let req = UninstallRequest {
+            app_path: Some(s(&app)),
+            leftover_paths: vec![s(&lib.join("Caches/com.office.app"))],
+            dry_run: false,
+        };
+
+        let calls = std::cell::RefCell::new(Vec::new());
+        let admin = |items: &[AdminRemoval]| {
+            calls.borrow_mut().extend(items.iter().map(|item| item.path().to_path_buf()));
+            vec![Err("Cancelled".to_string())]
+        };
+        let rep = uninstall_in(&r, &req, &fs_remove, &admin);
+        assert_eq!(*calls.borrow(), vec![app.clone()]);
+        assert_eq!(rep.outcomes[0].error.as_deref(), Some("Cancelled"));
+        // Cancelled: the app's data is kept.
+        assert_eq!(rep.outcomes[1].error.as_deref(), Some("the app was not uninstalled"));
+        assert!(lib.join("Caches/com.office.app").exists());
+
+        let rep = uninstall_in(&r, &req, &fs_remove, &|items| items.iter().map(|_| Ok(Action::Trash)).collect());
+        assert_eq!(rep.failed, 0, "{:?}", rep.outcomes);
+        assert!(!lib.join("Caches/com.office.app").exists());
+        fs::set_permissions(&app, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[test]
@@ -2107,8 +2166,12 @@ mod tests {
         assert_eq!(rep.outcomes[0].category.as_deref(), Some("privileged_helper"));
 
         let calls = std::cell::RefCell::new(Vec::new());
-        let admin = |jobs: &[JobRemoval]| {
-            calls.borrow_mut().push(jobs.iter().map(|j| (j.label.clone(), j.domain)).collect::<Vec<_>>());
+        let admin = |items: &[AdminRemoval]| {
+            let jobs = items.iter().map(|item| match item {
+                AdminRemoval::Job(j) => (j.label.clone(), j.domain),
+                AdminRemoval::App(_) => panic!("unexpected app"),
+            });
+            calls.borrow_mut().push(jobs.collect::<Vec<_>>());
             vec![Err("Cancelled".to_string())]
         };
         let rep = uninstall_in(&r, &UninstallRequest { dry_run: false, ..req.clone() }, &fs_remove, &admin);
