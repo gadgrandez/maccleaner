@@ -16,7 +16,7 @@ use crate::codesign;
 use crate::fsutil;
 use crate::performance::{self, missing_program, read_plist, sh_quote};
 use crate::rules::{Action, home_dir};
-use crate::{brew, progress, trash};
+use crate::{brew, launchd, progress, trash};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -204,6 +204,8 @@ struct Roots {
     uninstall_cask: fn(&str) -> Result<(), String>,
     /// Casks whose app was deleted without Homebrew: their record is a leftover of the app.
     deleted_casks: fn() -> Vec<brew::DeletedCask>,
+    /// Unloads these user launchd jobs and stops what runs from these paths before removing them.
+    stop_running: fn(&[String], &[PathBuf]),
 }
 
 impl Roots {
@@ -218,6 +220,10 @@ impl Roots {
             cask_of: brew::cask_for_app,
             uninstall_cask: |token| brew::uninstall(token, brew::BrewKind::Cask),
             deleted_casks: brew::deleted_casks,
+            stop_running: |labels, paths| {
+                labels.iter().for_each(|l| launchd::bootout(l));
+                performance::terminate_running_from(paths);
+            },
         })
     }
 
@@ -1197,8 +1203,25 @@ fn uninstall_in(roots: &Roots, req: &UninstallRequest, remove: Remover, admin: A
         Some(token) => (roots.uninstall_cask)(token).map(|()| Action::Delete),
         None => admin_results.get(p).cloned().unwrap_or_else(|| remove(p)),
     };
+    if !req.dry_run {
+        let paths: Vec<PathBuf> = checked.iter().filter_map(|(_, v)| v.as_ref().ok().map(|(p, _)| p.clone())).collect();
+        (roots.stop_running)(&agent_labels(&checked), &paths);
+    }
     // If the app cannot be removed, its data is kept.
     execute(checked, req.dry_run, req.app_path.is_some(), &remover)
+}
+
+/// Labels of the user LaunchAgents among the items: launchd keeps their jobs loaded, and their
+/// programs running, after the plists are gone. System-wide jobs are booted out by the admin script.
+fn agent_labels(checked: &[Checked]) -> Vec<String> {
+    checked
+        .iter()
+        .filter_map(|(_, v)| v.as_ref().ok())
+        .filter(|(_, kind)| kind == LeftoverKind::LaunchAgent.as_str())
+        .filter_map(|(path, _)| {
+            read_plist(path).map(|info| info.label).or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        })
+        .collect()
 }
 
 /// Free name for `path` in the Trash; `mv -n` never overwrites anyway.
@@ -1481,6 +1504,7 @@ mod tests {
             cask_of: |_| None,
             uninstall_cask: |_| panic!("unexpected brew call"),
             deleted_casks: Vec::new,
+            stop_running: |_, _| {},
         };
         for d in [&r.home, &r.applications, &r.system_applications, &r.library] {
             fs::create_dir_all(d).unwrap();
@@ -2079,6 +2103,24 @@ mod tests {
         d.insert("Label".into(), plist::Value::String(label.into()));
         d.insert("Program".into(), plist::Value::String(program.to_string_lossy().into_owned()));
         plist::Value::Dictionary(d).to_file_xml(p).unwrap();
+    }
+
+    #[test]
+    fn agent_labels_come_from_user_launch_agents() {
+        let tmp = TempDir::new("agent-labels");
+        let agents = tmp.path().join("LaunchAgents");
+        let plist = agents.join("com.foo.App.agent.plist");
+        write_job(&plist, "com.foo.Agent", Path::new("/x"));
+        let broken = agents.join("com.foo.Broken.plist");
+        fs::write(&broken, "not a plist").unwrap();
+        let ok = |p: &Path, k: LeftoverKind| (s(p), Ok((p.to_path_buf(), k.as_str().to_string())));
+        let checked = vec![
+            ok(&plist, LeftoverKind::LaunchAgent),
+            ok(&broken, LeftoverKind::LaunchAgent),
+            ok(&tmp.path().join("Caches"), LeftoverKind::Cache),
+            (s(&agents.join("gone.plist")), Err("missing".to_string())),
+        ];
+        assert_eq!(agent_labels(&checked), ["com.foo.Agent", "com.foo.Broken"]);
     }
 
     fn group<'a>(groups: &'a [OrphanGroup], id: &str) -> &'a OrphanGroup {

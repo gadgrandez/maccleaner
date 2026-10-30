@@ -787,6 +787,12 @@ fn c_buf_to_string(buf: &[u8]) -> String {
     CStr::from_bytes_until_nul(buf).map(|c| c.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
+fn executable(pid: i32) -> Option<String> {
+    let mut buf = vec![0u8; PROC_PIDPATHINFO_MAXSIZE];
+    let n = unsafe { proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    (n > 0).then(|| String::from_utf8_lossy(&buf[..n as usize]).into_owned())
+}
+
 fn process_info(pid: i32, my_uid: u32) -> Option<ProcessInfo> {
     let mut ru = RusageInfoV2::default();
     if unsafe { proc_pid_rusage(pid, RUSAGE_INFO_V2, (&mut ru as *mut RusageInfoV2).cast()) } != 0 {
@@ -798,9 +804,7 @@ fn process_info(pid: i32, my_uid: u32) -> Option<ProcessInfo> {
     if got != size {
         return None;
     }
-    let mut path_buf = vec![0u8; PROC_PIDPATHINFO_MAXSIZE];
-    let n = unsafe { proc_pidpath(pid, path_buf.as_mut_ptr().cast(), path_buf.len() as u32) };
-    let path = (n > 0).then(|| String::from_utf8_lossy(&path_buf[..n as usize]).into_owned());
+    let path = executable(pid);
     let mut name_buf = [0u8; 256];
     let n = unsafe { proc_name(pid, name_buf.as_mut_ptr().cast(), name_buf.len() as u32) };
     let short = if n > 0 { String::from_utf8_lossy(&name_buf[..n as usize]).into_owned() } else { String::new() };
@@ -832,10 +836,59 @@ pub fn top_processes(limit: usize) -> Vec<ProcessInfo> {
     procs
 }
 
+/// The executable is one of `paths` or inside one of them.
+fn runs_from(exe: &Path, paths: &[PathBuf]) -> bool {
+    paths.iter().any(|p| exe.starts_with(p))
+}
+
+/// Terminates the user's processes whose executable is in `paths` (SIGTERM, then SIGKILL after
+/// two seconds), so nothing keeps running from files that are about to be removed.
+pub(crate) fn terminate_running_from(paths: &[PathBuf]) {
+    // Executables are reported with their real path.
+    let paths: Vec<PathBuf> = paths.iter().map(|p| fs::canonicalize(p).unwrap_or_else(|_| p.clone())).collect();
+    let me = std::process::id() as i32;
+    let pids: Vec<i32> = all_pids()
+        .into_iter()
+        .filter(|&pid| pid > 0 && pid != me)
+        .filter(|&pid| executable(pid).is_some_and(|exe| runs_from(Path::new(&exe), &paths)))
+        .filter(|&pid| unsafe { libc::kill(pid, libc::SIGTERM) } == 0)
+        .collect();
+    let alive = |pid: &i32| unsafe { libc::kill(*pid, 0) } == 0;
+    for _ in 0..20 {
+        if !pids.iter().any(alive) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    for pid in pids.iter().filter(|p| alive(p)) {
+        unsafe { libc::kill(*pid, libc::SIGKILL) };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testutil::TempDir;
+
+    #[test]
+    fn runs_from_matches_whole_components() {
+        let paths = [PathBuf::from("/Users/me/Library/Application Support/Setapp"), PathBuf::from("/Applications/A.app")];
+        assert!(runs_from(Path::new("/Users/me/Library/Application Support/Setapp/LaunchAgents/S.app/Contents/MacOS/S"), &paths));
+        assert!(runs_from(Path::new("/Applications/A.app/Contents/MacOS/A"), &paths));
+        assert!(!runs_from(Path::new("/Users/me/Library/Application Support/SetappRemote/x"), &paths));
+        assert!(!runs_from(Path::new("/Applications/A.app2/x"), &paths));
+    }
+
+    #[test]
+    fn terminates_a_process_running_from_a_path() {
+        let tmp = TempDir::new("terminate");
+        let exe = tmp.path().join("sleeper");
+        fs::copy("/bin/sleep", &exe).unwrap();
+        let mut child = Command::new(&exe).arg("30").spawn().unwrap();
+        terminate_running_from(&[tmp.path().to_path_buf()]);
+        let status = child.wait().unwrap();
+        assert!(!status.success());
+    }
 
     #[test]
     fn struct_sizes_match_kernel() {

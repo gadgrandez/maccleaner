@@ -46,6 +46,11 @@ fn launchctl(args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// Unloads a job of the user's session; launchd stops its process and no longer restarts it.
+pub(crate) fn bootout(label: &str) {
+    let _ = launchctl(&["bootout", &format!("{}/{label}", domain())]);
+}
+
 impl Agent {
     pub fn plist_path(&self) -> Option<PathBuf> {
         home_dir().map(|h| h.join("Library/LaunchAgents").join(format!("{}.plist", self.label)))
@@ -97,7 +102,7 @@ impl Agent {
             fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
         fs::write(&plist, self.plist_contents(program)).map_err(|e| e.to_string())?;
-        let _ = launchctl(&["bootout", &self.target()]);
+        bootout(self.label);
         launchctl(&["bootstrap", &domain(), &plist.to_string_lossy()]).map(|_| ())
     }
 
@@ -111,7 +116,7 @@ impl Agent {
     }
 
     pub fn uninstall(&self) -> Result<(), String> {
-        let _ = launchctl(&["bootout", &self.target()]);
+        bootout(self.label);
         match self.plist_path() {
             Some(p) if p.exists() => fs::remove_file(p).map_err(|e| e.to_string()),
             _ => Ok(()),
