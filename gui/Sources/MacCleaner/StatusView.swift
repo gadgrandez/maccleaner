@@ -28,7 +28,8 @@ final class StatusStore {
         tick += 1
         history.append(Sample(id: tick,
                               memory: Double(s.memUsed) / Double(max(s.memTotal, 1)) * 100,
-                              load: (s.load.first ?? 0) / Double(max(s.cpuCount, 1)) * 100))
+                              // A load above the core count would draw outside the 0–100 % chart.
+                              load: min((s.load.first ?? 0) / Double(max(s.cpuCount, 1)) * 100, 100)))
         if history.count > 90 { history.removeFirst(history.count - 90) }
     }
 
@@ -110,6 +111,7 @@ struct StatusView: View {
                     .interpolationMethod(.catmullRom)
             }
             .chartYScale(domain: 0...100)
+            .chartPlotStyle { $0.clipped() } // the smoothed curve can overshoot the domain
             .chartXAxis(.hidden)
             .chartYAxis { AxisMarks(values: [0, 50, 100]) { v in AxisGridLine(); AxisValueLabel { Text(verbatim: "\(v.as(Int.self) ?? 0) %") } } }
             .chartForegroundStyleScale([loc("Memory"): Color.teal, loc("CPU"): Color.pink])
