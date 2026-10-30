@@ -144,6 +144,38 @@ struct AppInfo: Codable, Identifiable, Hashable, Sendable {
     var isUniversal: Bool { archs.count > 1 }
 }
 
+enum BrewKind: String, Codable, Sendable {
+    case formula, cask
+
+    var title: String {
+        switch self {
+        case .formula: loc("Formula")
+        case .cask: loc("Cask")
+        }
+    }
+}
+
+/// A Homebrew formula or cask.
+struct BrewPackage: Codable, Identifiable, Hashable, Sendable {
+    let name: String
+    let kind: BrewKind
+    let title: String
+    let desc: String?
+    let version: String
+    let bytes: UInt64
+    let requested: Bool
+    let dependents: [String]
+    let service: Bool
+    let apps: [String]
+    let appsMissing: Bool
+    var id: String { "\(kind.rawValue)/\(name)" }
+}
+
+struct BrewReport: Codable, Sendable {
+    let packages: [BrewPackage]
+    let unused: [BrewPackage]
+}
+
 struct LeftoverItem: Codable, Identifiable, Hashable, Sendable {
     let path: String
     let kind: String
@@ -164,6 +196,7 @@ struct LeftoverItem: Codable, Identifiable, Hashable, Sendable {
         case "launch_agent": loc("Launch agent")
         case "launch_daemon": loc("System service")
         case "privileged_helper": loc("Privileged helper")
+        case "homebrew_cask": loc("Homebrew record")
         case "app_scripts": loc("App scripts")
         case "cookies": loc("Cookies")
         case "webkit", "http_storage": loc("Web data")

@@ -400,3 +400,31 @@
 "Remove %@ of leftovers?" = "¿Eliminar %@ de restos?";
 "Remove %@ of extensions?" = "¿Eliminar %@ de extensiones?";
 "Nothing selected" = "Nada seleccionado";
+
+/* Homebrew */
+"Formula" = "Fórmula";
+"Cask" = "Cask";
+"Homebrew" = "Homebrew";
+"Search packages" = "Buscar paquete";
+"Uninstall (%@)" = "Desinstalar (%@)";
+"Homebrew will uninstall the app (it won't go to the Trash). The selected leftovers will go to the Trash." = "Homebrew desinstalará la app (no irá a la Papelera). Los restos seleccionados irán a la Papelera.";
+"Homebrew will uninstall the app and the selected leftovers will be deleted permanently." = "Homebrew desinstalará la app y los restos seleccionados se eliminarán definitivamente.";
+"Unused dependencies" = "Dependencias sin uso";
+"%@ package" = "%@ paquete";
+"%@ packages" = "%@ paquetes";
+"Choose a package to see what it takes up" = "Elige un paquete para ver lo que ocupa";
+"Remove %@ of unused dependencies?" = "¿Eliminar %@ de dependencias sin uso?";
+"Homebrew will uninstall them (brew autoremove). They won't go to the Trash." = "Homebrew las desinstalará (brew autoremove). No irán a la Papelera.";
+"Homebrew will uninstall it; it won't go to the Trash. To get it back, run %@." = "Homebrew lo desinstalará; no irá a la Papelera. Para recuperarlo, ejecuta %@.";
+"Projects or scripts that use it may stop working." = "Los proyectos o scripts que lo usen pueden dejar de funcionar.";
+"Its background service will be stopped." = "Se detendrá su servicio en segundo plano.";
+"Service" = "Servicio";
+"Required by %@. Homebrew won't uninstall it while they are installed." = "Lo necesita %@. Homebrew no lo desinstalará mientras estén instalados.";
+"Its data stays: to remove it too, uninstall the app from All apps." = "Sus datos se conservan: para eliminarlos también, desinstala la app desde Todas las apps.";
+"Packages" = "Paquetes";
+"Remove · %@" = "Eliminar · %@";
+"Homebrew installed them for packages that are no longer there. Nothing needs them now." = "Homebrew las instaló para paquetes que ya no están. Ya nada las necesita.";
+"App deleted" = "App borrada";
+"Its app was deleted without Homebrew, which still lists it as installed. Uninstalling it brings Homebrew up to date." = "Su app se borró sin Homebrew, que la sigue dando por instalada. Al desinstalarla, Homebrew queda al día.";
+"Homebrew record" = "Registro de Homebrew";
+"Homebrew removes its records itself (brew uninstall --cask)." = "Homebrew elimina sus registros por sí mismo (brew uninstall --cask).";

@@ -28,7 +28,7 @@ AppInfo { name, bundle_id?: string, version?: string, path, bytes: u64, is_apple
         }
 LeftoverItem { path, kind: "cache"|"preferences"|"app_support"|"container"|"group_container"|
                "saved_state"|"logs"|"launch_agent"|"cookies"|"webkit"|"http_storage"|"app_scripts"|
-               "launch_daemon"|"privileged_helper"|"other", bytes: u64,
+               "launch_daemon"|"privileged_helper"|"homebrew_cask"|"other", bytes: u64,
                requires_admin: bool /* system-wide launchd job or helper */ }
 AppLeftovers { app: AppInfo, items: [LeftoverItem], total_bytes: u64 }
 OrphanGroup { id: string /* shortest bundle id of the group */, items: [LeftoverItem], total_bytes: u64 }
@@ -40,12 +40,38 @@ named after the app (`CleanMyMac_5_Setapp` for `com.macpaw.CleanMyMac-setapp`) j
 installed app has that name. launchd jobs whose program is gone, and privileged helpers no daemon plist
 launches any more, are leftovers and do not count as installed. `mcl_apps_uninstall` without `app_path`
 removes the selected `requires_admin` items with a single authorization dialog: each job is booted out
-of launchd and its file is moved to the user's Trash.
+of launchd and its file is moved to the user's Trash. A cask whose app was deleted without Homebrew
+joins its app's group as a `homebrew_cask` item (its Caskroom folder), through the bundle id its
+uninstall and zap stanzas mention; removing it runs `brew uninstall --cask`.
 
 ```text
 ExtensionItem { name, path, kind: "preference_pane"|"quicklook"|"spotlight"|"internet_plugin"|
                 "screen_saver"|"services"|"mail_bundle", scope: "user"|"system", bytes: u64, removable: bool }
 ```
+
+## Homebrew (`brew`)
+
+```c
+char *mcl_brew_packages(void);                       /* -> BrewReport */
+char *mcl_brew_uninstall(const char *request_json);  /* {name:string, kind:"formula"|"cask"} -> true */
+char *mcl_brew_autoremove(void);                     /* -> true */
+```
+
+```text
+BrewPackage { name /* formula name or cask token */, kind: "formula"|"cask", title, desc?: string,
+              version, bytes: u64, requested: bool /* installed by the user, not as a dependency */,
+              dependents: [string] /* installed packages that need it */, service: bool,
+              apps: [string] /* the cask's apps still on disk */,
+              apps_missing: bool /* its apps were deleted without Homebrew, which still lists them */ }
+BrewReport { packages: [BrewPackage] /* formulae installed on request and casks */,
+             unused: [BrewPackage] /* dependencies `brew autoremove` would remove */ }
+```
+
+Everything goes through `brew`: nothing is deleted directly, so Homebrew stays in sync and refuses to
+remove a package another one needs (`--ignore-dependencies` is never passed). A formula's service is
+stopped (`brew services stop`) before it is uninstalled. `mcl_apps_uninstall` removes an app installed
+by a cask with `brew uninstall --cask` instead of moving it to the Trash; its leftovers are handled as
+usual.
 
 ## Performance (`performance`)
 

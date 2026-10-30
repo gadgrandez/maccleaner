@@ -2,6 +2,7 @@
 //! `{"ok":bool,"data":...,"error":...}` that is freed with `mcl_string_free`.
 
 mod apps;
+mod brew;
 mod clutter;
 mod dev;
 mod performance;

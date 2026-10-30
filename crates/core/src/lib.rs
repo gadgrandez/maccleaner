@@ -3,9 +3,11 @@
 
 pub mod access;
 pub mod apps;
+pub mod brew;
 pub mod clean;
 pub mod clutter;
 pub mod codesign;
+pub mod command;
 pub mod dev;
 pub mod fsutil;
 pub mod governor;

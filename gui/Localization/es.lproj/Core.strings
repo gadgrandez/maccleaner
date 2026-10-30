@@ -42,6 +42,7 @@
 "HOME is not available" = "HOME no disponible";
 "HOME is not set" = "HOME no definido";
 "Homebrew is not installed" = "Homebrew no está instalado";
+"invalid package name" = "nombre de paquete no válido";
 "Homebrew: old versions and downloads" = "Homebrew: versiones antiguas y descargas";
 "Intermediate build products; Xcode regenerates them." = "Productos intermedios de compilación; Xcode los regenera.";
 "internal core error" = "error interno del núcleo";

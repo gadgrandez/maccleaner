@@ -16,7 +16,7 @@ use crate::codesign;
 use crate::fsutil;
 use crate::performance::{self, missing_program, read_plist, sh_quote};
 use crate::rules::{Action, home_dir};
-use crate::{progress, trash};
+use crate::{brew, progress, trash};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -57,6 +57,8 @@ pub enum LeftoverKind {
     AppScripts,
     LaunchDaemon,
     PrivilegedHelper,
+    /// The record Homebrew keeps of a cask whose app was deleted without it.
+    HomebrewCask,
     Other,
 }
 
@@ -77,6 +79,7 @@ impl LeftoverKind {
             Self::AppScripts => "app_scripts",
             Self::LaunchDaemon => "launch_daemon",
             Self::PrivilegedHelper => "privileged_helper",
+            Self::HomebrewCask => "homebrew_cask",
             Self::Other => "other",
         }
     }
@@ -196,6 +199,11 @@ struct Roots {
     library: PathBuf,
     /// The item was installed by an installer package (it has a receipt).
     packaged: fn(&Path) -> bool,
+    /// The Homebrew cask that installed the app, which `brew` removes so it stays in sync.
+    cask_of: fn(&Path) -> Option<String>,
+    uninstall_cask: fn(&str) -> Result<(), String>,
+    /// Casks whose app was deleted without Homebrew: their record is a leftover of the app.
+    deleted_casks: fn() -> Vec<brew::DeletedCask>,
 }
 
 impl Roots {
@@ -207,6 +215,9 @@ impl Roots {
             system_applications: "/System/Applications".into(),
             library: "/Library".into(),
             packaged: has_receipt,
+            cask_of: brew::cask_for_app,
+            uninstall_cask: |token| brew::uninstall(token, brew::BrewKind::Cask),
+            deleted_casks: brew::deleted_casks,
         })
     }
 
@@ -900,6 +911,16 @@ fn orphans_in(roots: &Roots) -> Vec<OrphanGroup> {
     for job in &installed.orphan_jobs {
         found.push(Found { id: job.label.clone(), path: job.path.clone(), kind: job.kind, admin: job.admin });
     }
+    // The cask joins its app's group through the bundle id its stanzas mention.
+    for cask in (roots.deleted_casks)() {
+        let ids: Vec<&str> = cask.names.iter().map(|n| entry_id(n)).filter(|id| is_reverse_dns(id)).collect();
+        let id = ids
+            .iter()
+            .find(|id| found.iter().any(|f| f.id.eq_ignore_ascii_case(id)))
+            .or(ids.first())
+            .map_or(cask.token.clone(), |id| id.to_string());
+        found.push(Found { id, path: cask.caskroom, kind: LeftoverKind::HomebrewCask, admin: false });
+    }
     let root_of = group_roots(found.iter().map(|f| f.id.to_lowercase()));
 
     // Folders named after an orphaned app join its group, unless an installed app has that name.
@@ -1130,11 +1151,17 @@ fn uninstall_in(roots: &Roots, req: &UninstallRequest, remove: Remover, admin: A
     let mut checked: Vec<Checked> = Vec::new();
     let mut admin_items: Vec<AdminRemoval> = Vec::new();
     let mut app_id = None;
+    // Removed with `brew uninstall --cask`: the app of a cask, or the record of one whose app is gone.
+    let mut casks: HashMap<PathBuf, String> = HashMap::new();
     if let Some(raw) = &req.app_path {
         let v = validate_app(roots, raw).map(|(path, info)| {
             app_id = info.bundle_id;
+            let cask = (roots.cask_of)(&path);
             // Finder asks for the password too: moving a folder needs write access to it and its parent.
-            if !fsutil::writable(&path) || !path.parent().is_some_and(fsutil::writable) {
+            let movable = fsutil::writable(&path) && path.parent().is_some_and(fsutil::writable);
+            if let Some(token) = cask {
+                casks.insert(path.clone(), token);
+            } else if !movable {
                 admin_items.push(AdminRemoval::App(path.clone()));
             }
             (path, "app".to_string())
@@ -1144,7 +1171,13 @@ fn uninstall_in(roots: &Roots, req: &UninstallRequest, remove: Remover, admin: A
     // System-wide jobs are only removed as orphans, never as part of an app's uninstallation.
     let outside_home = req.leftover_paths.iter().any(|raw| !Path::new(raw).starts_with(&roots.home));
     let installed = (req.app_path.is_none() && outside_home).then(|| Installed::scan(roots));
+    let deleted_casks = if req.app_path.is_none() && outside_home { (roots.deleted_casks)() } else { Vec::new() };
     for raw in &req.leftover_paths {
+        if let Some(cask) = deleted_casks.iter().find(|c| c.caskroom.as_os_str() == raw.as_str()) {
+            casks.insert(cask.caskroom.clone(), cask.token.clone());
+            checked.push((raw.clone(), Ok((cask.caskroom.clone(), LeftoverKind::HomebrewCask.as_str().to_string()))));
+            continue;
+        }
         let v = match installed.as_ref().and_then(|i| orphan_job(i, raw)) {
             Some(job) => {
                 admin_items.push(AdminRemoval::Job(JobRemoval { label: job.label.clone(), path: job.path.clone(), domain: job.domain }));
@@ -1159,7 +1192,11 @@ fn uninstall_in(roots: &Roots, req: &UninstallRequest, remove: Remover, admin: A
     } else {
         admin_items.iter().map(|item| item.path().to_path_buf()).zip(admin(&admin_items)).collect()
     };
-    let remover = |p: &Path| admin_results.get(p).cloned().unwrap_or_else(|| remove(p));
+    let remover = |p: &Path| match casks.get(p) {
+        // Homebrew deletes it; it doesn't go to the Trash.
+        Some(token) => (roots.uninstall_cask)(token).map(|()| Action::Delete),
+        None => admin_results.get(p).cloned().unwrap_or_else(|| remove(p)),
+    };
     // If the app cannot be removed, its data is kept.
     execute(checked, req.dry_run, req.app_path.is_some(), &remover)
 }
@@ -1441,6 +1478,9 @@ mod tests {
             system_applications: base.join("System/Applications"),
             library: base.join("Library"),
             packaged: |p| p.to_string_lossy().contains("Packaged"),
+            cask_of: |_| None,
+            uninstall_cask: |_| panic!("unexpected brew call"),
+            deleted_casks: Vec::new,
         };
         for d in [&r.home, &r.applications, &r.system_applications, &r.library] {
             fs::create_dir_all(d).unwrap();
@@ -1799,6 +1839,63 @@ mod tests {
         assert_eq!(rep.failed, 0, "{:?}", rep.outcomes);
         assert!(!lib.join("Caches/com.office.app").exists());
         fs::set_permissions(&app, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn homebrew_casks_are_uninstalled_with_brew() {
+        let tmp = TempDir::new("apps-cask");
+        let mut r = roots(&tmp);
+        let lib = r.user_library();
+        let app = make_app(&r.applications, "Viewer", &[("CFBundleIdentifier", "com.viewer.app")], false, b"");
+        touch(&lib.join("Caches/com.viewer.app/x"), 10);
+        r.cask_of = |p| p.ends_with("Viewer.app").then(|| "viewer".to_string());
+        r.uninstall_cask = |token| if token == "viewer" { Err("brew ran".into()) } else { Ok(()) };
+        let req = UninstallRequest {
+            app_path: Some(s(&app)),
+            leftover_paths: vec![s(&lib.join("Caches/com.viewer.app"))],
+            dry_run: false,
+        };
+        let rep = uninstall_in(&r, &req, &fs_remove, &no_admin);
+        // brew removes the app, never the Trash; when it fails, the data is kept.
+        assert_eq!(rep.outcomes[0].error.as_deref(), Some("brew ran"));
+        assert!(app.exists() && lib.join("Caches/com.viewer.app").exists());
+
+        r.uninstall_cask = |_| Ok(());
+        let rep = uninstall_in(&r, &req, &fs_remove, &no_admin);
+        assert_eq!(rep.failed, 0, "{:?}", rep.outcomes);
+        assert_eq!(rep.outcomes[0].action, Some(Action::Delete));
+        assert!(!lib.join("Caches/com.viewer.app").exists());
+    }
+
+    #[test]
+    fn deleted_casks_join_their_app_leftovers() {
+        let tmp = TempDir::new("apps-deleted-cask");
+        let mut r = roots(&tmp);
+        let lib = r.user_library();
+        touch(&lib.join("Preferences/com.viewer.app.plist"), 10);
+        let caskroom = tmp.path().join("homebrew/Caskroom/viewer");
+        touch(&caskroom.join("2.1/x"), 10);
+        // Function pointers can't capture the temporary folder: it goes through the environment.
+        r.deleted_casks = || {
+            let dir = std::env::var_os("MCL_TEST_CASKROOM").map(PathBuf::from).unwrap();
+            vec![brew::DeletedCask { token: "viewer".into(), caskroom: dir, names: vec!["TERM".into(), "com.viewer.app.plist".into()] }]
+        };
+        unsafe { std::env::set_var("MCL_TEST_CASKROOM", &caskroom) };
+
+        let groups = orphans_in(&r);
+        let group = groups.iter().find(|g| g.id == "com.viewer.app").expect("group");
+        let kinds: Vec<LeftoverKind> = group.items.iter().map(|i| i.kind).collect();
+        assert!(kinds.contains(&LeftoverKind::Preferences) && kinds.contains(&LeftoverKind::HomebrewCask), "{groups:?}");
+
+        r.uninstall_cask = |token| if token == "viewer" { Ok(()) } else { Err("wrong cask".into()) };
+        let req = UninstallRequest { app_path: None, leftover_paths: vec![s(&caskroom), s(&lib.join("Preferences/com.viewer.app.plist"))], dry_run: false };
+        let rep = uninstall_in(&r, &req, &fs_remove, &no_admin);
+        assert_eq!(rep.failed, 0, "{:?}", rep.outcomes);
+        assert_eq!(rep.outcomes[0].category.as_deref(), Some("homebrew_cask"));
+        assert_eq!(rep.outcomes[0].action, Some(Action::Delete));
+        // brew removed the record (stubbed here): MacCleaner never deletes it itself.
+        assert!(caskroom.exists());
+        assert!(!lib.join("Preferences/com.viewer.app.plist").exists());
     }
 
     #[test]

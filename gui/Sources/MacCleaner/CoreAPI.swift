@@ -104,6 +104,19 @@ extension Core {
         try await call(request: request) { mcl_apps_uninstall($0) }
     }
 
+    // MARK: Homebrew
+
+    static func brewPackages() async throws -> BrewReport { try await call { mcl_brew_packages() } }
+
+    static func brewUninstall(_ package: BrewPackage) async throws {
+        struct Request: Encodable { let name: String; let kind: BrewKind }
+        let _: Bool = try await call(request: Request(name: package.name, kind: package.kind)) { mcl_brew_uninstall($0) }
+    }
+
+    static func brewAutoremove() async throws {
+        let _: Bool = try await call { mcl_brew_autoremove() }
+    }
+
     static func removeExtensions(paths: [String]) async throws -> CleanReport {
         try await call(request: PathsRequest(paths: paths, dryRun: false)) { mcl_extensions_remove($0) }
     }

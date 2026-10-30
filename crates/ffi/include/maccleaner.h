@@ -44,6 +44,7 @@ void mcl_string_free(char *s);
 #include "maccleaner_clutter.h"
 #include "maccleaner_privacy.h"
 #include "maccleaner_dev.h"
+#include "maccleaner_brew.h"
 
 #ifdef __cplusplus
 }

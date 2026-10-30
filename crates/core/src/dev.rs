@@ -8,17 +8,18 @@
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::Read;
+
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use crate::clean::{CleanOutcome, CleanReport};
 use crate::rules::home_dir;
-use crate::{fsutil, governor, progress, trash};
+use crate::command::{first_existing, run};
+use crate::{brew, fsutil, governor, progress, trash};
 
 // MARK: Project artifacts
 
@@ -517,47 +518,9 @@ fn trash_items(home: &Path) -> Vec<ToolCache> {
 
 // MARK: Commands (Homebrew, Docker)
 
-const BREW_PATHS: &[&str] = &["/opt/homebrew/bin/brew", "/usr/local/bin/brew"];
 const DOCKER_PATHS: &[&str] = &["/usr/local/bin/docker", "/opt/homebrew/bin/docker", "/Applications/Docker.app/Contents/Resources/bin/docker"];
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 const ESTIMATE_TIMEOUT: Duration = Duration::from_secs(20);
-
-fn first_existing(paths: &[&str]) -> Option<PathBuf> {
-    paths.iter().map(PathBuf::from).find(|p| p.is_file())
-}
-
-/// Runs with a time limit; returns (success, stdout+stderr).
-fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<(bool, String), String> {
-    let mut child = Command::new(program)
-        .args(args)
-        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
-        .env("HOMEBREW_NO_ENV_HINTS", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let started = Instant::now();
-    let status = loop {
-        if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
-            break s;
-        }
-        if started.elapsed() > timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("timed out".into());
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    };
-    let mut out = String::new();
-    if let Some(mut s) = child.stdout.take() {
-        let _ = s.read_to_string(&mut out);
-    }
-    if let Some(mut s) = child.stderr.take() {
-        let _ = s.read_to_string(&mut out);
-    }
-    Ok((status.success(), out))
-}
 
 /// "1.2GB", "512.3 MB", "0B", "830kB" → bytes (decimal, as brew and docker print them).
 fn parse_size(s: &str) -> Option<u64> {
@@ -577,7 +540,7 @@ fn parse_size(s: &str) -> Option<u64> {
 }
 
 fn brew_item() -> Option<ToolCache> {
-    let brew = first_existing(BREW_PATHS)?;
+    let brew = brew::locate()?;
     let (_, out) = run(&brew, &["cleanup", "-n"], ESTIMATE_TIMEOUT).ok()?;
     // "This operation would free approximately 1.2GB of disk space."
     let bytes = out.split("approximately").nth(1).and_then(|r| r.split_whitespace().next()).and_then(parse_size).unwrap_or(0);
@@ -654,7 +617,7 @@ pub fn run_commands(ids: &[String]) -> Vec<CommandResult> {
     ids.iter()
         .map(|id| {
             let result = progress::step(Path::new(id), 0, || match id.as_str() {
-                "homebrew_cleanup" => first_existing(BREW_PATHS)
+                "homebrew_cleanup" => brew::locate()
                     .ok_or_else(|| "Homebrew is not installed".to_string())
                     .and_then(|brew| run(&brew, &["cleanup"], COMMAND_TIMEOUT)),
                 "docker_prune" => first_existing(DOCKER_PATHS).ok_or_else(|| "Docker is not installed".to_string()).and_then(|d| {
